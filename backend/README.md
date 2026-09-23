@@ -4,7 +4,7 @@ Story 1.1 provides the production-oriented backend foundation for the marketplac
 
 ## Requirements
 
-- Node.js 22 LTS
+- Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)
 - MongoDB available locally or through a connection string
 - A dedicated MongoDB database for tests whose name ends in `_test`
 
