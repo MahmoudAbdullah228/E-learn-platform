@@ -4,14 +4,34 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "node --watch server.js",
-    "start": "node server.js"
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "start": "node --env-file-if-exists=.env server.js",
+    "lint": "eslint .",
+    "docs:check": "node scripts/validate-openapi.js",
+    "test": "node --import ./tests/setup-env.js --test --test-concurrency=1",
+    "verify": "npm run lint && npm run docs:check && npm test",
+    "seed:admin": "node --env-file-if-exists=.env scripts/seed-admin.js",
+    "seed:categories": "node --env-file-if-exists=.env scripts/seed-categories.js"
   },
   "dependencies": {
-    "dotenv": "^17.2.2",
-    "express": "^5.1.0"
+    "bcrypt": "^6.0.0",
+    "compression": "^1.8.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "helmet": "^8.3.0",
+    "mongoose": "^9.10.2",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@readme/openapi-parser": "^9.0.0",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "supertest": "^7.3.0"
   }
 }
