@@ -17,7 +17,9 @@ before(async () => {
 });
 
 after(async () => {
-  await mongoose.connection.db.dropDatabase();
+  if (mongoose.connection.db) {
+    await mongoose.connection.db.dropDatabase();
+  }
   await disconnectDatabase();
 });
 
@@ -55,4 +57,28 @@ test('category seed is idempotent and preserves unique slugs', async () => {
   assert.equal(categories.length, defaultCategoryNames.length);
   assert.equal(new Set(slugs).size, defaultCategoryNames.length);
   assert.equal(categories.every((category) => category.isActive), true);
+});
+
+test('admin seed refuses to promote or reset a non-admin account', async () => {
+  const originalPassword = 'student-original-password';
+  const student = await User.create({
+    name: 'Existing Student',
+    email: 'student@example.com',
+    passwordHash: await bcrypt.hash(originalPassword, 10),
+    roles: ['student'],
+    status: 'active',
+  });
+
+  await assert.rejects(
+    seedAdmin({
+      name: 'Platform Admin',
+      email: student.email,
+      password: 'attempted-admin-password',
+    }),
+    /email belongs to a non-admin user/,
+  );
+
+  const unchangedStudent = await User.findById(student.id).select('+passwordHash');
+  assert.deepEqual(unchangedStudent.roles, ['student']);
+  assert.equal(await bcrypt.compare(originalPassword, unchangedStudent.passwordHash), true);
 });

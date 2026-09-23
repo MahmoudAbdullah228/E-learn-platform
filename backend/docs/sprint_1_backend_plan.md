@@ -431,7 +431,7 @@ Index: `{ sectionId: 1, position: 1 }`.
 - إعداد env validation وMongoDB connection وgraceful shutdown: 1 ساعة.
 - CORS وHelmet وlogging وcompression: 0.5 ساعة.
 - error format و404 handler وasync handling: 1 ساعة.
-- إعداد Jest/Supertest وقاعدة الاختبار وlint: 1 ساعة.
+- إعداد Node.js test runner/Supertest وقاعدة الاختبار وlint: 1 ساعة.
 - seed scripts للـAdmin والتصنيفات: 0.5 ساعة.
 
 **Acceptance Criteria**

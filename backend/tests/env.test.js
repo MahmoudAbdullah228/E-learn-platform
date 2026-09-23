@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const envModuleUrl = new URL('../src/config/env.js', import.meta.url).href;
+const dbModuleUrl = new URL('../src/config/db.js', import.meta.url).href;
 const adminSeedPath = fileURLToPath(new URL('../scripts/seed-admin.js', import.meta.url));
 
 function importEnvironment(overrides, omittedKeys = []) {
@@ -31,6 +32,30 @@ test('test startup requires an isolated database URI', () => {
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /MONGO_TEST_URI is required/);
+});
+
+test('test startup rejects the application database even when its name ends in _test', () => {
+  const sharedUri = 'mongodb://localhost:27017/shared_test?retryWrites=false';
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `const module = await import(${JSON.stringify(dbModuleUrl)}); await module.connectDatabase({ maxRetries: 1 });`,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        MONGO_URI: 'mongodb://127.0.0.1/shared_test',
+        MONGO_TEST_URI: sharedUri,
+      },
+    },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /must be different from MONGO_URI/);
 });
 
 test('bcrypt cost below 10 is rejected', () => {

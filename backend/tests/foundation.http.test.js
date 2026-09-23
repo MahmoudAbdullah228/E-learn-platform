@@ -4,7 +4,7 @@ import test from 'node:test';
 import request from 'supertest';
 
 import { app } from '../src/app.js';
-import { serializeRequest } from '../src/config/logger.js';
+import { serializeError, serializeRequest } from '../src/config/logger.js';
 import { errorHandler } from '../src/middlewares/errorHandler.js';
 
 test('GET /api/v1/health returns the success envelope', async () => {
@@ -107,6 +107,21 @@ test('request logging excludes query values and headers', () => {
     remotePort: 1234,
   });
   assert.equal(JSON.stringify(serialized).includes('review-secret'), false);
+});
+
+test('error logging excludes messages, stacks, and unsafe codes', () => {
+  const error = new Error('mongodb://admin:secret@example.test/database');
+  error.code = 'ECONNREFUSED';
+  const serialized = serializeError(error);
+
+  assert.deepEqual(serialized, {
+    errorType: 'Error',
+    errorCode: 'ECONNREFUSED',
+  });
+  assert.equal(JSON.stringify(serialized).includes('secret'), false);
+
+  error.code = 'unsafe code containing credentials=secret';
+  assert.deepEqual(serializeError(error), { errorType: 'Error' });
 });
 
 test('CORS accepts configured origins with credentials', async () => {

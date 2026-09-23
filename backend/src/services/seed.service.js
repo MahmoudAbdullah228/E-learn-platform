@@ -18,6 +18,10 @@ export async function seedAdmin({ name, email, password }) {
   const existingAdmin = await User.findOne({ email: normalizedEmail });
 
   if (existingAdmin) {
+    if (!existingAdmin.roles.includes('admin')) {
+      throw new Error('Admin seed refused: email belongs to a non-admin user');
+    }
+
     existingAdmin.name = name;
     existingAdmin.passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
     existingAdmin.roles = ['admin'];

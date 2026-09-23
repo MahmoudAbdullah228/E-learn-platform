@@ -1,6 +1,6 @@
 import { ZodError } from 'zod';
 
-import { logger } from '../config/logger.js';
+import { logger, serializeError } from '../config/logger.js';
 import { ApiError } from '../utils/ApiError.js';
 
 export function notFoundHandler(request, response, next) {
@@ -67,7 +67,7 @@ export function errorHandler(error, request, response, next) {
 
   if (normalizedError.statusCode >= 500) {
     const requestLogger = request.log ?? logger;
-    requestLogger.error({ err: error }, 'Unhandled request error');
+    requestLogger.error(serializeError(error), 'Unhandled request error');
   }
 
   response.status(normalizedError.statusCode).json({

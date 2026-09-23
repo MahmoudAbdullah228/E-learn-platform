@@ -16,6 +16,21 @@ export function serializeRequest(request) {
   };
 }
 
+export function serializeError(error) {
+  const errorType =
+    typeof error?.name === 'string' && error.name.length <= 64 ? error.name : 'UnknownError';
+  const fields = { errorType };
+
+  if (
+    typeof error?.code === 'string' &&
+    /^[a-zA-Z0-9_-]{1,64}$/.test(error.code)
+  ) {
+    fields.errorCode = error.code;
+  }
+
+  return fields;
+}
+
 export const logger = pino({
   level: env.LOG_LEVEL,
   redact: {

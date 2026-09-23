@@ -1,17 +1,22 @@
 import { app } from './src/app.js';
 import { connectDatabase, disconnectDatabase } from './src/config/db.js';
 import { env } from './src/config/env.js';
-import { logger } from './src/config/logger.js';
+import { logger, serializeError } from './src/config/logger.js';
 import { closeHttpServer } from './src/services/shutdown.service.js';
+import { startHttpServer } from './src/services/startup.service.js';
 
 let httpServer;
 let isShuttingDown = false;
 
 async function startServer() {
-  await connectDatabase();
-
-  httpServer = app.listen(env.PORT, () => {
-    logger.info({ port: env.PORT }, 'API server listening');
+  httpServer = await startHttpServer({
+    connectDatabase,
+    disconnectDatabase,
+    isShuttingDown: () => isShuttingDown,
+    listen: () =>
+      app.listen(env.PORT, () => {
+        logger.info({ port: env.PORT }, 'API server listening');
+      }),
   });
 }
 
@@ -41,19 +46,16 @@ process.once('SIGTERM', () => {
 });
 
 process.once('unhandledRejection', (error) => {
-  logger.fatal({ err: error }, 'Unhandled promise rejection');
+  logger.fatal(serializeError(error), 'Unhandled promise rejection');
   void shutdown('unhandledRejection', 1);
 });
 
 process.once('uncaughtException', (error) => {
-  logger.fatal({ err: error }, 'Uncaught exception');
+  logger.fatal(serializeError(error), 'Uncaught exception');
   void shutdown('uncaughtException', 1);
 });
 
 startServer().catch((error) => {
-  logger.fatal(
-    { errorType: error.name, errorMessage: error.message },
-    'API startup failed',
-  );
+  logger.fatal(serializeError(error), 'API startup failed');
   void shutdown('startupFailure', 1);
 });
