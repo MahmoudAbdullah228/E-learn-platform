@@ -1,0 +1,71 @@
+openapi: 3.1.0
+info:
+  title: E-Learning Marketplace API
+  version: 0.1.0
+  description: Story 1.1 foundation contract.
+servers:
+  - url: /api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Report API process health
+      tags: [Health]
+      responses:
+        '200':
+          description: API process is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  responses:
+    InternalServerError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    SuccessResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data: {}
+        message:
+          type: string
+    HealthResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [status, uptimeSeconds]
+              additionalProperties: false
+              properties:
+                status:
+                  const: ok
+                uptimeSeconds:
+                  type: integer
+                  minimum: 0
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items: {}

@@ -1,13 +1,31 @@
+import compression from 'compression';
+import cors from 'cors';
 import express from 'express';
+import helmet from 'helmet';
+import pinoHttp from 'pino-http';
+
+import { corsOptions } from './config/cors.js';
+import { logger, serializeRequest } from './config/logger.js';
+import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
+import { healthRouter } from './modules/health/health.routes.js';
 
 export const app = express();
 
-app.use(express.json());
+app.disable('x-powered-by');
+app.use(
+  pinoHttp({
+    logger,
+    serializers: {
+      req: serializeRequest,
+    },
+  }),
+);
+app.use(helmet());
+app.use(cors(corsOptions));
+app.use(compression());
+app.use(express.json({ limit: '1mb' }));
 
-app.get('/api/v1/health', (request, response) => {
-  response.json({ status: 'ok' });
-});
+app.use('/api/v1/health', healthRouter);
 
-app.use((request, response) => {
-  response.status(404).json({ message: 'Not found' });
-});
+app.use(notFoundHandler);
+app.use(errorHandler);
