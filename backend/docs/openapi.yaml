@@ -141,6 +141,7 @@ paths:
     post:
       operationId: refreshSession
       summary: Rotate the refresh token and issue a new access token
+      description: Each family permits at most 4096 successful rotations. The next refresh revokes that family and returns 401 INVALID_REFRESH_TOKEN; sign in again. Historical hashes are never evicted while the family remains usable.
       tags: [Auth]
       security:
         - refreshCookie: []

@@ -16,7 +16,7 @@ const refreshSessionSchema = new mongoose.Schema(
     revokedAt: { type: Date, default: null },
     revokedReason: {
       type: String,
-      enum: ['logout', 'logout_all', 'reuse_detected', 'account_suspended'],
+      enum: ['logout', 'logout_all', 'reuse_detected', 'account_suspended', 'rotation_limit'],
       default: null,
     },
   },

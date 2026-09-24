@@ -20,6 +20,7 @@ import { errorHandler } from '../src/middlewares/errorHandler.js';
 import { hashOneTimeToken } from '../src/utils/oneTimeToken.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 import { createSessionService } from '../src/modules/auth/session.service.js';
+import { MAX_REFRESH_ROTATIONS } from '../src/config/sessionPolicy.js';
 
 const request = (application) => supertest.agent(application).set('Origin', 'http://localhost:5173');
 
@@ -795,4 +796,77 @@ test('signed tokens with a malformed subject or missing session are rejected saf
       .auth(token, { type: 'bearer' }).expect(401);
     assert.equal(response.body.error.code, 'AUTHENTICATION_REQUIRED');
   }
+});
+
+async function loginNearRotationLimit() {
+  await createVerifiedStudent();
+  const credentials = { email: validRegistration.email, password: validRegistration.password };
+  const login = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const hashes = Array.from({ length: MAX_REFRESH_ROTATIONS - 1 }, (_, index) =>
+    index.toString(16).padStart(64, '0'));
+  await RefreshSession.updateOne({}, { $set: { usedTokenHashes: hashes } });
+  return { login, hashes, credentials };
+}
+
+test('rotation history is bounded without evicting old hashes and requires a new login at the limit', async () => {
+  const { login, hashes, credentials } = await loginNearRotationLimit();
+  const last = await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(login)).expect(200);
+  const stored = await RefreshSession.findOne({}).select('+usedTokenHashes').lean();
+  assert.equal(stored.usedTokenHashes.length, MAX_REFRESH_ROTATIONS);
+  assert.deepEqual(stored.usedTokenHashes.slice(0, -1), hashes);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(last)).expect(401);
+  const revoked = await RefreshSession.findOne({}).select('+usedTokenHashes').lean();
+  assert.equal(revoked.revokedReason, 'rotation_limit');
+  assert.equal(revoked.usedTokenHashes.length, MAX_REFRESH_ROTATIONS);
+  await request(protectedApp).get('/private')
+    .auth(last.body.data.accessToken, { type: 'bearer' }).expect(401);
+  const fresh = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(fresh)).expect(200);
+});
+
+test('concurrent refresh at the boundary cannot grow history beyond the limit', async () => {
+  const { login } = await loginNearRotationLimit();
+  const results = await Promise.all([0, 1].map(() => request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(login))));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 401]);
+  const stored = await RefreshSession.findOne({}).select('+usedTokenHashes').lean();
+  assert.equal(stored.usedTokenHashes.length, MAX_REFRESH_ROTATIONS);
+  assert.ok(stored.revokedAt);
+});
+
+test('worker stop drains a directly invoked processNext and prevents late job deletion', async () => {
+  await VerificationRequest.create({ email: 'job@example.com', availableAt: new Date(),
+    expiresAt: new Date(Date.now() + 86_400_000) });
+  let entered;
+  let release;
+  let signal;
+  const started = new Promise(resolve => { entered = resolve; });
+  const worker = createVerificationWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
+    signal = input.signal;
+    entered();
+    await new Promise(resolve => { release = resolve; });
+  } });
+  const work = worker.processNext();
+  await started;
+  await worker.stop();
+  assert.equal(signal.aborted, true);
+  release();
+  assert.equal(await work, false);
+  assert.equal(await VerificationRequest.countDocuments(), 1);
+});
+
+test('cancellation during user lookup prevents subsequent verification writes and SMTP', async (t) => {
+  const controller = new AbortController();
+  t.mock.method(User, 'findOne', async () => {
+    controller.abort();
+    return { id: new mongoose.Types.ObjectId().toString() };
+  });
+  t.mock.method(OneTimeToken, 'findOneAndUpdate', () => assert.fail('Write after cancellation'));
+  const service = createAuthService({ emailSender: {
+    sendEmailVerification() { assert.fail('SMTP after cancellation'); },
+  } });
+  await assert.rejects(service.deliverVerificationRequest({
+    email: 'student@example.com', signal: controller.signal,
+  }), { name: 'AbortError' });
 });

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcrypt';
 
 import { env } from '../../config/env.js';
+import { MAX_REFRESH_ROTATIONS } from '../../config/sessionPolicy.js';
 import { RefreshSession } from '../../models/RefreshSession.js';
 import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
@@ -91,6 +92,12 @@ export function createSessionService({ clock = () => new Date() } = {}) {
         throw invalidRefreshToken();
       }
       if (session.revokedAt || session.expiresAt <= now) throw invalidRefreshToken();
+      if (session.usedTokenHashes.length >= MAX_REFRESH_ROTATIONS) {
+        await RefreshSession.updateOne({ _id: session._id, revokedAt: null }, {
+          $set: { revokedAt: now, revokedReason: 'rotation_limit' },
+        });
+        throw invalidRefreshToken();
+      }
 
       const user = await User.findById(session.userId).select('+tokenVersion');
       if (!user || user.status !== 'active' || !user.emailVerifiedAt ||
@@ -113,6 +120,8 @@ export function createSessionService({ clock = () => new Date() } = {}) {
         tokenHash,
         revokedAt: null,
         expiresAt: { $gt: now },
+        // Enforce the bound in the same atomic operation as the append.
+        [`usedTokenHashes.${MAX_REFRESH_ROTATIONS - 1}`]: { $exists: false },
       }, {
         $set: { tokenHash: replacementHash },
         $push: { usedTokenHashes: tokenHash },

@@ -91,6 +91,7 @@ export function createAuthService({ emailSender, clock = () => new Date() }) {
     async deliverVerificationRequest({ email, requestedAt = clock(), signal }) {
       signal?.throwIfAborted();
       const user = await User.findOne({ email, status: 'active', emailVerifiedAt: null });
+      signal?.throwIfAborted();
       if (!user) return;
 
       // Create a placeholder if TTL cleanup removed the previous token. Never
@@ -101,6 +102,7 @@ export function createAuthService({ emailSender, clock = () => new Date() }) {
           expiresAt: new Date(clock().getTime() + TTL_MS) } },
         { upsert: true, returnDocument: 'after', runValidators: true },
       );
+      signal?.throwIfAborted();
       const issuanceId = randomUUID();
       const now = clock();
       const claimed = await OneTimeToken.findOneAndUpdate({
@@ -111,6 +113,7 @@ export function createAuthService({ emailSender, clock = () => new Date() }) {
         ],
       }, { $set: { issuanceId, issuanceUntil: new Date(now.getTime() + 600_000) } },
       { returnDocument: 'after' });
+      signal?.throwIfAborted();
       if (!claimed) {
         const current = await OneTimeToken.findOne({ userId: user.id, purpose: PURPOSE });
         if (current?.lastIssuedAt && current.lastIssuedAt >= requestedAt) return;

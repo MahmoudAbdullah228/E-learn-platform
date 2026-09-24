@@ -60,6 +60,10 @@ POST /api/v1/auth/logout-all
 
 Access tokens are signed JWTs that expire after 15 minutes. Refresh tokens are opaque, stored only in an HttpOnly cookie, and represented by keyed hashes in MongoDB. Every refresh rotates the token; reuse of an older token revokes that device's session family. Logout ends one device session, while logout-all invalidates every refresh session and existing access token for the user.
 
+Each family allows at most 4096 successful refresh rotations. The next refresh revokes the family and returns `401 INVALID_REFRESH_TOKEN`, requiring login again. The bound is enforced atomically with the hash append. No historical hashes are evicted, preserving replay detection for the whole family lifetime while bounding document and index growth. Existing families already at or above the limit are revoked on their next refresh.
+
+Worker shutdown tracks scheduled and directly invoked jobs. At the drain deadline it signals cancellation, preventing subsequent delivery steps and job acknowledgement. Already-dispatched database writes or SMTP requests cannot be recalled; SMTP acceptance is not proof of token activation, and expired leases permit recovery.
+
 JWTs carry a session identifier. Authentication checks the current user, token version, and the live session on every protected request. Logout and reuse detection therefore reject that device's access tokens on subsequent requests. Logout-all increments the user's version atomically and cleans up only older-version sessions, preserving new logins made after that increment. The version check still denies old credentials if session cleanup fails.
 
 Login, refresh, and logout require an allowed `Origin`, or an allowed `Referer` when `Origin` is absent. Missing or malformed sources return `403 REQUEST_ORIGIN_DENIED`; explicit disallowed origins are rejected by CORS. CLI and Postman clients must send an allowed `Origin` explicitly. `SameSite=Lax` assumes a same-site frontend/API deployment; cross-site cookie deployment is not enabled. Access-token responses use `Cache-Control: no-store`.

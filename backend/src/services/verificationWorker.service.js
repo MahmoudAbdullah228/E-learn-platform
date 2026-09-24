@@ -12,7 +12,7 @@ export function createVerificationWorker({ deliver, clock = () => new Date(), sh
   let stopped = false;
   const controller = new AbortController();
 
-  async function processNext() {
+  async function processOne() {
     if (stopped) return false;
     const now = clock();
     const leaseId = randomUUID();
@@ -41,11 +41,14 @@ export function createVerificationWorker({ deliver, clock = () => new Date(), sh
     return true;
   }
 
+  function processNext() {
+    if (stopped || running) return Promise.resolve(false);
+    running = processOne().finally(() => { running = undefined; });
+    return running;
+  }
+
   function tick() {
-    if (stopped || running) return;
-    running = processNext()
-      .catch(error => logger.error(serializeError(error), 'Verification worker failed'))
-      .finally(() => { running = undefined; });
+    void processNext().catch(error => logger.error(serializeError(error), 'Verification worker failed'));
   }
 
   return {
