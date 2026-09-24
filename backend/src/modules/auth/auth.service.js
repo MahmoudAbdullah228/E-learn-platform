@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import bcrypt from 'bcrypt';
 
 import { env } from '../../config/env.js';
@@ -87,17 +89,56 @@ export function createAuthService({ emailSender, clock = () => new Date() }) {
       await VerificationRequest.create({ email, availableAt: now, expiresAt: new Date(now.getTime() + TTL_MS) });
     },
 
-    async deliverVerificationRequest({ email }) {
+    async deliverVerificationRequest({ email, requestedAt = clock(), signal }) {
+      signal?.throwIfAborted();
       const user = await User.findOne({ email, status: 'active', emailVerifiedAt: null });
       if (!user) return;
 
+      // Create a placeholder if TTL cleanup removed the previous token. Never
+      // overwrite a usable token before SMTP accepts its replacement.
+      await OneTimeToken.findOneAndUpdate(
+        { userId: user.id, purpose: PURPOSE },
+        { $setOnInsert: { tokenHash: hashOneTimeToken(generateOneTimeToken()),
+          expiresAt: new Date(clock().getTime() + TTL_MS) } },
+        { upsert: true, returnDocument: 'after', runValidators: true },
+      );
+      const issuanceId = randomUUID();
+      const now = clock();
+      const claimed = await OneTimeToken.findOneAndUpdate({
+        userId: user.id, purpose: PURPOSE,
+        $and: [
+          { $or: [{ issuanceUntil: null }, { issuanceUntil: { $lte: now } }] },
+          { $or: [{ lastIssuedAt: null }, { lastIssuedAt: { $lt: requestedAt } }] },
+        ],
+      }, { $set: { issuanceId, issuanceUntil: new Date(now.getTime() + 600_000) } },
+      { returnDocument: 'after' });
+      if (!claimed) {
+        const current = await OneTimeToken.findOne({ userId: user.id, purpose: PURPOSE });
+        if (current?.lastIssuedAt && current.lastIssuedAt >= requestedAt) return;
+        throw new Error('Verification issuance is busy');
+      }
       const token = generateOneTimeToken();
-      await emailSender.sendEmailVerification({
-        recipientEmail: user.email, recipientName: user.name, token,
-      });
-      // Never replace the usable token until SMTP accepts the replacement.
-      // Concurrent failed sends make no token writes; successful sends rotate it.
-      await saveVerificationToken(user.id, token, clock());
+      try {
+        signal?.throwIfAborted();
+        await emailSender.sendEmailVerification({
+          recipientEmail: user.email, recipientName: user.name, token,
+        });
+        signal?.throwIfAborted();
+        const acceptedAt = clock();
+        const result = await OneTimeToken.updateOne({
+          _id: claimed._id, issuanceId, issuanceUntil: { $gt: acceptedAt },
+        }, { $set: { tokenHash: hashOneTimeToken(token),
+          expiresAt: new Date(acceptedAt.getTime() + TTL_MS), consumedAt: null,
+          lastIssuedAt: acceptedAt, issuanceId: null, issuanceUntil: null } });
+        if (!result.matchedCount) throw new Error('Verification issuance lease expired');
+      } finally {
+        // After forced shutdown, leave the lease for recovery rather than
+        // starting database work on a connection that is being closed.
+        if (!signal?.aborted) {
+          await OneTimeToken.updateOne({ _id: claimed._id, issuanceId },
+            { $set: { issuanceId: null, issuanceUntil: null } });
+        }
+      }
     },
   });
 }

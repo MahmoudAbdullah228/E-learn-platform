@@ -25,6 +25,9 @@ const oneTimeTokenSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    issuanceId: { type: String, default: null },
+    issuanceUntil: { type: Date, default: null },
+    lastIssuedAt: { type: Date, default: null },
   },
   {
     timestamps: { createdAt: true, updatedAt: false },

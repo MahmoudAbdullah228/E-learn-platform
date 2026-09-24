@@ -8,7 +8,7 @@ info:
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
-    A registration 503 EMAIL_DELIVERY_UNAVAILABLE means the account already exists;
+    A registration 503 EMAIL_DELIVERY_UNAVAILABLE means the account was created but delivery failed;
     offer resend instead of registering it again. All errors use the shared error envelope.
 servers:
   - url: /api/v1

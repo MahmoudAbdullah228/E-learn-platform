@@ -277,24 +277,21 @@ test('resend keeps its generic response when email delivery fails', async () => 
     .expect(200);
 });
 
-test('overlapping failed deliveries preserve the original token in either failure order', async () => {
+test('overlapping failed deliveries are serialized and preserve the original token', async () => {
   await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
   const originalToken = deliveredEmails[0].token;
-  for (const order of [[0, 1], [1, 0]]) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     const pending = [];
     const service = createAuthService({ emailSender: {
       sendEmailVerification() {
         return new Promise((resolve, reject) => pending.push({ resolve, reject }));
       },
     } });
-    const jobs = [0, 1].map(() => service.deliverVerificationRequest({ email: 'student@example.com' }));
-    const outcomes = Promise.allSettled(jobs);
-    while (pending.length < 2) await new Promise(resolve => setImmediate(resolve));
-    for (const index of order) {
-      pending[index].reject(new Error('SMTP unavailable'));
-      await new Promise(resolve => setImmediate(resolve));
-    }
-    assert.ok((await outcomes).every(result => result.status === 'rejected'));
+    const outcome = assert.rejects(service.deliverVerificationRequest({ email: 'student@example.com' }), /SMTP unavailable/);
+    while (pending.length < 1) await new Promise(resolve => setImmediate(resolve));
+    await assert.rejects(service.deliverVerificationRequest({ email: 'student@example.com' }), /busy/);
+    pending[0].reject(new Error('SMTP unavailable'));
+    await outcome;
     const stored = await OneTimeToken.findOne({}).select('+tokenHash');
     assert.equal(stored.tokenHash, hashOneTimeToken(originalToken));
   }
@@ -360,10 +357,11 @@ test('a failed delivery cannot replace a concurrently delivered token', async ()
   const rejection = assert.rejects(pending, /Unavailable/);
   await entered;
   const successful = createAuthService({ emailSender });
-  await successful.deliverVerificationRequest({ email: 'student@example.com' });
-  const delivered = deliveredEmails[1].token;
+  await assert.rejects(successful.deliverVerificationRequest({ email: 'student@example.com' }), /busy/);
   rejectFailed(new Error('Unavailable'));
   await rejection;
+  await successful.deliverVerificationRequest({ email: 'student@example.com' });
+  const delivered = deliveredEmails[1].token;
   await request(app).post('/api/v1/auth/verify-email').send({ token: delivered }).expect(200);
 });
 
@@ -441,4 +439,69 @@ test('suspension does not consume a token needed after reactivation', async () =
   await request(app).post('/api/v1/auth/verify-email').send({ token }).expect(400);
   await User.updateOne({}, { $set: { status: 'active' } });
   await request(app).post('/api/v1/auth/verify-email').send({ token }).expect(200);
+});
+
+test('concurrent and queued resend requests produce one accepted replacement', async () => {
+  await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
+  const requestedAt = new Date();
+  let release;
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const first = createAuthService({ emailSender: { async sendEmailVerification(message) {
+    deliveredEmails.push(message);
+    entered();
+    await new Promise(resolve => { release = resolve; });
+  } } });
+  const second = createAuthService({ emailSender });
+  const input = { email: 'student@example.com', requestedAt };
+  const pending = first.deliverVerificationRequest(input);
+  await started;
+  try {
+    await assert.rejects(second.deliverVerificationRequest(input), /busy/);
+  } finally { release(); await pending; }
+  await second.deliverVerificationRequest(input);
+  assert.equal(deliveredEmails.length, 2);
+  await request(app).post('/api/v1/auth/verify-email')
+    .send({ token: deliveredEmails[1].token }).expect(200);
+});
+
+test('worker shutdown aborts a stuck delivery at its deadline and retains the job', async () => {
+  await VerificationRequest.create({ email: 'job@example.com', availableAt: new Date(),
+    expiresAt: new Date(Date.now() + 86_400_000) });
+  let entered;
+  let release;
+  let signal;
+  const started = new Promise(resolve => { entered = resolve; });
+  const worker = createVerificationWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
+    signal = input.signal;
+    entered();
+    await new Promise(resolve => { release = resolve; });
+  } });
+  worker.start();
+  await started;
+  await worker.stop();
+  assert.equal(signal.aborted, true);
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await VerificationRequest.countDocuments(), 1);
+  assert.equal(await worker.processNext(), false);
+});
+
+test('cancelled or expired issuance cannot activate a late SMTP result', async () => {
+  await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
+  const original = deliveredEmails[0].token;
+  const controller = new AbortController();
+  const cancelled = createAuthService({ emailSender: { async sendEmailVerification() {
+    controller.abort();
+  } } });
+  await assert.rejects(cancelled.deliverVerificationRequest({
+    email: 'student@example.com', signal: controller.signal,
+  }), { name: 'AbortError' });
+  let now = new Date(Date.now() + 600_001);
+  const expired = createAuthService({ clock: () => now, emailSender: {
+    async sendEmailVerification() { now = new Date(now.getTime() + 600_001); },
+  } });
+  await assert.rejects(expired.deliverVerificationRequest({ email: 'student@example.com' }), /lease expired/);
+  assert.equal((await OneTimeToken.findOne({}).select('+tokenHash')).tokenHash,
+    hashOneTimeToken(original));
 });

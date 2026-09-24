@@ -20,6 +20,7 @@ export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
   const authService = createAuthService({ emailSender: emailSender ?? emailService });
   application.locals.verificationWorker = createVerificationWorker({
     deliver: authService.deliverVerificationRequest,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
   });
 
   application.disable('x-powered-by');

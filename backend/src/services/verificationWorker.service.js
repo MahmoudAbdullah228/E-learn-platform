@@ -6,12 +6,14 @@ import { VerificationRequest } from '../models/VerificationRequest.js';
 const LEASE_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 
-export function createVerificationWorker({ deliver, clock = () => new Date() }) {
+export function createVerificationWorker({ deliver, clock = () => new Date(), shutdownTimeoutMs = 10_000 }) {
   let timer;
   let running;
   let stopped = false;
+  const controller = new AbortController();
 
   async function processNext() {
+    if (stopped) return false;
     const now = clock();
     const leaseId = randomUUID();
     const job = await VerificationRequest.findOneAndUpdate(
@@ -21,9 +23,12 @@ export function createVerificationWorker({ deliver, clock = () => new Date() }) 
     );
     if (!job) return false;
     try {
-      await deliver({ email: job.email });
+      if (stopped) return false;
+      await deliver({ email: job.email, requestedAt: job.createdAt, signal: controller.signal });
+      if (controller.signal.aborted) return false;
       await VerificationRequest.deleteOne({ _id: job._id, leaseId });
     } catch (error) {
+      if (controller.signal.aborted) return false;
       logger.error(serializeError(error), 'Verification request delivery failed');
       if (job.attempts >= MAX_ATTEMPTS) {
         await VerificationRequest.deleteOne({ _id: job._id, leaseId });
@@ -46,8 +51,7 @@ export function createVerificationWorker({ deliver, clock = () => new Date() }) 
   return {
     processNext,
     start() {
-      if (timer) return;
-      stopped = false;
+      if (timer || stopped) return;
       timer = setInterval(tick, 1000);
       timer.unref();
       tick();
@@ -56,7 +60,14 @@ export function createVerificationWorker({ deliver, clock = () => new Date() }) 
       stopped = true;
       clearInterval(timer);
       timer = undefined;
-      await running;
+      let deadline;
+      try {
+        await Promise.race([running, new Promise(resolve => {
+          deadline = setTimeout(() => { controller.abort(); resolve(); }, shutdownTimeoutMs);
+        })]);
+      } finally {
+        clearTimeout(deadline);
+      }
     },
   };
 }
