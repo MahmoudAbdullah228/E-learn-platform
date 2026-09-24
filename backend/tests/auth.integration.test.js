@@ -2,17 +2,26 @@ import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 
 import bcrypt from 'bcrypt';
+import express from 'express';
+import { decodeJwt } from 'jose';
 import mongoose from 'mongoose';
-import request from 'supertest';
+import supertest from 'supertest';
 
 import { createApp } from '../src/app.js';
 import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { OneTimeToken } from '../src/models/OneTimeToken.js';
+import { RefreshSession } from '../src/models/RefreshSession.js';
 import { User } from '../src/models/User.js';
 import { VerificationRequest } from '../src/models/VerificationRequest.js';
 import { createAuthService } from '../src/modules/auth/auth.service.js';
 import { createVerificationWorker } from '../src/services/verificationWorker.service.js';
+import { authenticate, authorize } from '../src/middlewares/authenticate.js';
+import { errorHandler } from '../src/middlewares/errorHandler.js';
 import { hashOneTimeToken } from '../src/utils/oneTimeToken.js';
+import { signAccessToken } from '../src/utils/sessionToken.js';
+import { createSessionService } from '../src/modules/auth/session.service.js';
+
+const request = (application) => supertest.agent(application).set('Origin', 'http://localhost:5173');
 
 const deliveredEmails = [];
 const emailSender = {
@@ -21,6 +30,10 @@ const emailSender = {
   },
 };
 const app = createApp({ emailSender });
+const protectedApp = express();
+protectedApp.get('/private', authenticate, (req, res) => res.json({ data: {} }));
+protectedApp.get('/admin', authenticate, authorize('admin'), (req, res) => res.json({ data: {} }));
+protectedApp.use(errorHandler);
 
 const validRegistration = {
   name: 'New Student',
@@ -31,13 +44,25 @@ const validRegistration = {
 before(async () => {
   await connectDatabase({ maxRetries: 1 });
   assert.match(mongoose.connection.name, /_test$/);
-  await Promise.all([User.init(), OneTimeToken.init(), VerificationRequest.init()]);
+  await Promise.all([User.init(), OneTimeToken.init(), VerificationRequest.init(),
+    RefreshSession.init()]);
 });
 
 beforeEach(async () => {
   deliveredEmails.length = 0;
-  await Promise.all([User.deleteMany({}), OneTimeToken.deleteMany({}), VerificationRequest.deleteMany({})]);
+  await Promise.all([User.deleteMany({}), OneTimeToken.deleteMany({}),
+    VerificationRequest.deleteMany({}), RefreshSession.deleteMany({})]);
 });
+
+function getRefreshCookie(response) {
+  return response.headers['set-cookie'].find((value) => value.startsWith('refresh_token='));
+}
+
+async function createVerifiedStudent() {
+  await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
+  await request(app).post('/api/v1/auth/verify-email')
+    .send({ token: deliveredEmails[0].token }).expect(200);
+}
 
 after(async () => {
   if (mongoose.connection.db) {
@@ -504,4 +529,270 @@ test('cancelled or expired issuance cannot activate a late SMTP result', async (
   await assert.rejects(expired.deliverVerificationRequest({ email: 'student@example.com' }), /lease expired/);
   assert.equal((await OneTimeToken.findOne({}).select('+tokenHash')).tokenHash,
     hashOneTimeToken(original));
+});
+
+test('verified users can login with a 15-minute access token and secure refresh cookie', async () => {
+  await createVerifiedStudent();
+  const response = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email,
+    password: validRegistration.password,
+  }).expect(200);
+
+  assert.equal(response.body.data.expiresInSeconds, 900);
+  assert.deepEqual(response.body.data.user.roles, ['student']);
+  assert.equal('refreshToken' in response.body.data, false);
+  const payload = decodeJwt(response.body.data.accessToken);
+  assert.equal(payload.exp - payload.iat, 900);
+  assert.deepEqual(payload.roles, ['student']);
+
+  const cookie = getRefreshCookie(response);
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /SameSite=Lax/i);
+  assert.match(cookie, /Path=\/api\/v1\/auth/i);
+  const rawToken = cookie.match(/^refresh_token=([^;]+)/)[1];
+  const session = await RefreshSession.findOne({}).select('+tokenHash +usedTokenHashes').lean();
+  assert.ok(session);
+  assert.equal(payload.sid, session.familyId);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(JSON.stringify(session).includes(rawToken), false);
+});
+
+test('login rejects invalid, unverified, and suspended accounts safely', async () => {
+  await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
+  const wrong = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: 'wrong password',
+  }).expect(401);
+  assert.equal(wrong.body.error.code, 'INVALID_CREDENTIALS');
+
+  const missing = await request(app).post('/api/v1/auth/login').send({
+    email: 'missing@example.com', password: 'wrong password',
+  }).expect(401);
+  assert.deepEqual(missing.body, wrong.body);
+
+  const unverified = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(403);
+  assert.equal(unverified.body.error.code, 'EMAIL_NOT_VERIFIED');
+
+  await User.updateOne({}, { $set: { emailVerifiedAt: new Date(), status: 'suspended' } });
+  const suspended = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(403);
+  assert.equal(suspended.body.error.code, 'ACCOUNT_SUSPENDED');
+});
+
+test('refresh rotates tokens and replay revokes that session family', async () => {
+  await createVerifiedStudent();
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const firstCookie = getRefreshCookie(login);
+
+  const refreshed = await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', firstCookie).expect(200);
+  const replacementCookie = getRefreshCookie(refreshed);
+  assert.notEqual(replacementCookie, firstCookie);
+  assert.equal(await RefreshSession.countDocuments(), 1);
+
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', firstCookie).expect(401);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', replacementCookie).expect(401);
+  const session = await RefreshSession.findOne({}).lean();
+  assert.equal(session.revokedReason, 'reuse_detected');
+  for (const token of [login.body.data.accessToken, refreshed.body.data.accessToken]) {
+    await request(protectedApp).get('/private').auth(token, { type: 'bearer' }).expect(401);
+  }
+});
+
+test('refresh rejects missing, malformed, expired, and revoked sessions', async () => {
+  await request(app).post('/api/v1/auth/refresh').expect(401);
+  await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', 'refresh_token=malformed').expect(401);
+
+  await createVerifiedStudent();
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const cookie = getRefreshCookie(login);
+  await RefreshSession.updateOne({}, { $set: { expiresAt: new Date(Date.now() - 1) } });
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', cookie).expect(401);
+
+  await RefreshSession.updateOne({}, {
+    $set: { expiresAt: new Date(Date.now() + 60_000), revokedAt: new Date(),
+      revokedReason: 'logout' },
+  });
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', cookie).expect(401);
+});
+
+test('logout revokes only the current device while logout-all revokes every device', async () => {
+  await createVerifiedStudent();
+  const credentials = { email: validRegistration.email, password: validRegistration.password };
+  const first = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const second = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const firstCookie = getRefreshCookie(first);
+  const secondCookie = getRefreshCookie(second);
+
+  const logout = await request(app).post('/api/v1/auth/logout')
+    .set('Cookie', firstCookie).expect(200);
+  assert.match(getRefreshCookie(logout), /Expires=Thu, 01 Jan 1970/i);
+  await request(protectedApp).get('/private')
+    .auth(first.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(protectedApp).get('/private')
+    .auth(second.body.data.accessToken, { type: 'bearer' }).expect(200);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', firstCookie).expect(401);
+  const secondRefresh = await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', secondCookie).expect(200);
+
+  await request(app).post('/api/v1/auth/logout-all')
+    .set('Authorization', `Bearer ${second.body.data.accessToken}`).expect(200);
+  await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(secondRefresh)).expect(401);
+  await request(app).post('/api/v1/auth/logout-all')
+    .set('Authorization', `Bearer ${second.body.data.accessToken}`).expect(401);
+});
+
+test('suspension and expired access tokens block authenticated operations', async () => {
+  await createVerifiedStudent();
+  const user = await User.findOne({}).select('+tokenVersion');
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const expiredToken = await signAccessToken({
+    userId: user.id, roles: user.roles, tokenVersion: user.tokenVersion,
+    familyId: decodeJwt(login.body.data.accessToken).sid,
+  }, { expiresInSeconds: -1 });
+
+  const protectedApp = express();
+  protectedApp.get('/student', authenticate, authorize('student'), (req, res) =>
+    res.json({ data: { userId: req.auth.userId } }));
+  protectedApp.get('/admin', authenticate, authorize('admin'), (req, res) =>
+    res.json({ data: {} }));
+  protectedApp.use(errorHandler);
+
+  await request(protectedApp).get('/student')
+    .set('Authorization', `Bearer ${expiredToken}`).expect(401);
+  await request(protectedApp).get('/admin')
+    .set('Authorization', `Bearer ${login.body.data.accessToken}`).expect(403);
+
+  await User.updateOne({ _id: user._id }, { $set: { status: 'suspended' } });
+  await request(protectedApp).get('/student')
+    .set('Authorization', `Bearer ${login.body.data.accessToken}`).expect(401);
+  await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(login)).expect(401);
+});
+
+test('session endpoints reject untrusted or missing request sources before changing sessions', async () => {
+  await createVerifiedStudent();
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const cookie = getRefreshCookie(login);
+  const before = await RefreshSession.findOne({}).select('+tokenHash').lean();
+  for (const endpoint of ['login', 'refresh', 'logout']) {
+    for (const headers of [
+      {}, { Referer: 'https://untrusted.example/page' }, { Referer: 'invalid-url' },
+      { Origin: 'null', Referer: 'http://localhost:5173/page' },
+      { Origin: 'https://untrusted.example', Referer: 'http://localhost:5173/page' },
+    ]) {
+      const denied = await supertest(app).post(`/api/v1/auth/${endpoint}`)
+        .set(headers).set('Cookie', cookie).send({
+          email: validRegistration.email, password: validRegistration.password,
+        }).expect(403);
+      assert.equal(denied.headers['set-cookie'], undefined);
+    }
+  }
+  const after = await RefreshSession.findOne({}).select('+tokenHash').lean();
+  assert.equal(after.tokenHash, before.tokenHash);
+  assert.equal(after.revokedAt, null);
+  assert.equal(await RefreshSession.countDocuments(), 1);
+  await supertest(app).post('/api/v1/auth/refresh').set('Cookie', cookie)
+    .set('Referer', 'http://localhost:5173/account').expect(200);
+});
+
+test('logout-all preserves logins using the new version while revoking old sessions', async (t) => {
+  await createVerifiedStudent();
+  const credentials = { email: validRegistration.email, password: validRegistration.password };
+  const oldLogin = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const user = await User.findOne({});
+  const original = RefreshSession.updateMany.bind(RefreshSession);
+  let release;
+  let entered;
+  const gate = new Promise(resolve => { release = resolve; });
+  const cleanupStarted = new Promise(resolve => { entered = resolve; });
+  t.mock.method(RefreshSession, 'updateMany', async (...args) => {
+    entered();
+    await gate;
+    return original(...args);
+  });
+  const logout = createSessionService().logoutAll({ userId: user.id });
+  await cleanupStarted;
+  let newLogin;
+  try {
+    newLogin = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  } finally { release(); await logout; }
+  await request(protectedApp).get('/private')
+    .auth(oldLogin.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(protectedApp).get('/private')
+    .auth(newLogin.body.data.accessToken, { type: 'bearer' }).expect(200);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(newLogin)).expect(200);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(oldLogin)).expect(401);
+});
+
+test('simultaneous refresh reuse revokes access and refresh credentials of only that device', async () => {
+  await createVerifiedStudent();
+  const credentials = { email: validRegistration.email, password: validRegistration.password };
+  const first = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const other = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const results = await Promise.all([0, 1].map(() => request(app)
+    .post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(first))));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 401]);
+  const winner = results.find(result => result.status === 200);
+  await request(protectedApp).get('/private')
+    .auth(winner.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(winner)).expect(401);
+  await request(protectedApp).get('/private')
+    .auth(other.body.data.accessToken, { type: 'bearer' }).expect(200);
+});
+
+test('authentication checks current roles, session expiry, and session ownership', async () => {
+  await createVerifiedStudent();
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const token = login.body.data.accessToken;
+  await request(protectedApp).get('/admin').auth(token, { type: 'bearer' }).expect(403);
+  await User.updateOne({}, { $set: { roles: ['admin'] } });
+  await request(protectedApp).get('/admin').auth(token, { type: 'bearer' }).expect(200);
+  await RefreshSession.updateOne({}, { $set: { userId: new mongoose.Types.ObjectId() } });
+  await request(protectedApp).get('/private').auth(token, { type: 'bearer' }).expect(401);
+  const user = await User.findOne({});
+  await RefreshSession.updateOne({}, { $set: { userId: user.id, expiresAt: new Date(0) } });
+  await request(protectedApp).get('/private').auth(token, { type: 'bearer' }).expect(401);
+});
+
+test('logout-all version change invalidates credentials even if session cleanup fails', async (t) => {
+  await createVerifiedStudent();
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email, password: validRegistration.password,
+  }).expect(200);
+  const user = await User.findOne({});
+  t.mock.method(RefreshSession, 'updateMany', async () => { throw new Error('Cleanup unavailable'); });
+  await assert.rejects(createSessionService().logoutAll({ userId: user.id }), /Cleanup unavailable/);
+  assert.equal((await RefreshSession.findOne({})).revokedAt, null);
+  await request(protectedApp).get('/private')
+    .auth(login.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(app).post('/api/v1/auth/refresh').set('Cookie', getRefreshCookie(login)).expect(401);
+});
+
+test('signed tokens with a malformed subject or missing session are rejected safely', async () => {
+  await createVerifiedStudent();
+  const user = await User.findOne({}).select('+tokenVersion');
+  for (const claims of [
+    { userId: 'not-an-object-id', familyId: 'd60b04b0-1767-4fd2-91fd-8d5c03b3ee39' },
+    { userId: user.id },
+  ]) {
+    const token = await signAccessToken({ ...claims, roles: user.roles, tokenVersion: user.tokenVersion });
+    const response = await request(protectedApp).get('/private')
+      .auth(token, { type: 'bearer' }).expect(401);
+    assert.equal(response.body.error.code, 'AUTHENTICATION_REQUIRED');
+  }
 });

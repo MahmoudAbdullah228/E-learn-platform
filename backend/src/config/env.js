@@ -21,6 +21,15 @@ const environmentSchema = z
     MONGO_TEST_URI: z.string().trim().optional(),
     CORS_ORIGINS: z.string().default('http://localhost:5173'),
     BCRYPT_ROUNDS: z.coerce.number().int().min(10).max(14).default(12),
+    JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must contain at least 32 characters'),
+    JWT_ISSUER: z.string().trim().min(1).default('e-learning-platform-api'),
+    JWT_AUDIENCE: z.string().trim().min(1).default('e-learning-platform-web'),
+    ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().default(900)
+      .refine((value) => value === 900, 'ACCESS_TOKEN_TTL_SECONDS must be 900'),
+    REFRESH_TOKEN_PEPPER: z.string().min(32,
+      'REFRESH_TOKEN_PEPPER must contain at least 32 characters'),
+    REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().min(3600).max(7_776_000)
+      .default(2_592_000),
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
     TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
@@ -56,6 +65,8 @@ const environmentSchema = z
     REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
+    LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(60),
     AUTH_RATE_LIMIT_WINDOW_MS: z.coerce
       .number()
       .int()
@@ -110,6 +121,29 @@ const environmentSchema = z
         path: ['SMTP_PASSWORD'],
         message: 'SMTP_USER and SMTP_PASSWORD must be provided together',
       });
+    }
+
+    if (values.JWT_ACCESS_SECRET === values.REFRESH_TOKEN_PEPPER) {
+      context.addIssue({
+        code: 'custom',
+        path: ['REFRESH_TOKEN_PEPPER'],
+        message: 'REFRESH_TOKEN_PEPPER must be different from JWT_ACCESS_SECRET',
+      });
+    }
+
+    if (values.NODE_ENV === 'production') {
+      for (const [key, secret] of [
+        ['JWT_ACCESS_SECRET', values.JWT_ACCESS_SECRET],
+        ['REFRESH_TOKEN_PEPPER', values.REFRESH_TOKEN_PEPPER],
+      ]) {
+        if (/^(replace|example|change|test[-_])/i.test(secret)) {
+          context.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `${key} must be a strong deployment-specific value`,
+          });
+        }
+      }
     }
   });
 

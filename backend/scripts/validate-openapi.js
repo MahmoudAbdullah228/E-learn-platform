@@ -23,5 +23,11 @@ assert.ok(
   contract.paths['/auth/resend-verification']?.post,
   'POST /auth/resend-verification is missing from the OpenAPI contract',
 );
+for (const path of ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/logout-all']) {
+  assert.ok(contract.paths[path]?.post, `POST ${path} is missing from the OpenAPI contract`);
+}
+assert.ok(contract.components.securitySchemes.bearerAuth, 'Bearer security scheme is missing');
+assert.ok(contract.components.securitySchemes.refreshCookie,
+  'Refresh-cookie security scheme is missing');
 assert.ok(contract.components.schemas.SuccessResponse, 'SuccessResponse schema is missing');
 assert.ok(contract.components.schemas.ErrorResponse, 'ErrorResponse schema is missing');

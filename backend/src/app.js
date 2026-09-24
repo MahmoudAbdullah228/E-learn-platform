@@ -12,12 +12,14 @@ import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
 import { docsRouter } from './modules/docs/docs.routes.js';
 import { createAuthService } from './modules/auth/auth.service.js';
+import { createSessionService } from './modules/auth/session.service.js';
 import { emailService } from './services/email.service.js';
 import { createVerificationWorker } from './services/verificationWorker.service.js';
 
 export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
   const application = express();
   const authService = createAuthService({ emailSender: emailSender ?? emailService });
+  const sessionService = createSessionService();
   application.locals.verificationWorker = createVerificationWorker({
     deliver: authService.deliverVerificationRequest,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
@@ -42,7 +44,7 @@ export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
   application.use('/api/v1', docsRouter);
   application.use(
     '/api/v1/auth',
-    createAuthRouter({ authService, rateLimitStoreFactory }),
+    createAuthRouter({ authService, sessionService, rateLimitStoreFactory }),
   );
 
   application.use(notFoundHandler);

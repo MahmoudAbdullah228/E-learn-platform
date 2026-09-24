@@ -6,12 +6,13 @@ import request from 'supertest';
 
 import { createApp } from '../src/app.js';
 import { createAuthRateLimiter } from '../src/middlewares/rateLimiter.js';
-import { registerSchema } from '../src/modules/auth/auth.schemas.js';
+import { loginSchema, registerSchema } from '../src/modules/auth/auth.schemas.js';
 import {
   createEmailService,
   createSmtpTransportOptions,
 } from '../src/services/email.service.js';
 import { generateOneTimeToken, hashOneTimeToken } from '../src/utils/oneTimeToken.js';
+import { generateRefreshToken, hashRefreshToken } from '../src/utils/sessionToken.js';
 
 test('one-time token generation returns random opaque values and stable hashes', () => {
   const firstToken = generateOneTimeToken();
@@ -21,6 +22,15 @@ test('one-time token generation returns random opaque values and stable hashes',
   assert.notEqual(firstToken, secondToken);
   assert.equal(hashOneTimeToken(firstToken), hashOneTimeToken(firstToken));
   assert.notEqual(hashOneTimeToken(firstToken), firstToken);
+});
+
+test('refresh tokens are opaque and produce stable keyed hashes', () => {
+  const firstToken = generateRefreshToken();
+  const secondToken = generateRefreshToken();
+  assert.match(firstToken, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(firstToken, secondToken);
+  assert.equal(hashRefreshToken(firstToken), hashRefreshToken(firstToken));
+  assert.notEqual(hashRefreshToken(firstToken), firstToken);
 });
 
 test('registration validation enforces the bcrypt UTF-8 byte limit', () => {
@@ -43,6 +53,15 @@ test('registration validation rejects excessively long passwords before hashing'
 
   assert.equal(result.success, false);
   assert.match(result.error.issues[0].message, /too long/);
+});
+
+test('login validation enforces the bcrypt UTF-8 byte limit', () => {
+  const result = loginSchema.safeParse({
+    email: 'student@example.com',
+    password: '😀'.repeat(19),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error.issues[0].message, /72 UTF-8 bytes/);
 });
 
 test('email service creates a verification link without putting the token in headers', async () => {
@@ -125,5 +144,6 @@ test('auth routes request isolated shared-store instances by limiter namespace',
     },
   });
 
-  assert.deepEqual(namespaces, ['register', 'verify-email', 'resend-verification']);
+  assert.deepEqual(namespaces,
+    ['register', 'verify-email', 'resend-verification', 'login', 'refresh']);
 });

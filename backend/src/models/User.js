@@ -37,6 +37,13 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: true,
+      select: false,
+    },
   },
   { timestamps: true },
 );

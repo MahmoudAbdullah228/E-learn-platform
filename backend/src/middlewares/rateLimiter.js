@@ -47,5 +47,17 @@ export function createAuthRateLimiters({ storeFactory } = {}) {
       message: 'Too many verification email requests. Please try again later',
       store: storeFactory?.('resend-verification'),
     }),
+    login: createAuthRateLimiter({
+      limit: env.LOGIN_RATE_LIMIT_MAX,
+      code: 'LOGIN_RATE_LIMITED',
+      message: 'Too many sign-in attempts. Please try again later',
+      store: storeFactory?.('login'),
+    }),
+    refresh: createAuthRateLimiter({
+      limit: env.REFRESH_RATE_LIMIT_MAX,
+      code: 'REFRESH_RATE_LIMITED',
+      message: 'Too many session refresh attempts. Please try again later',
+      store: storeFactory?.('refresh'),
+    }),
   });
 }

@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 const envModuleUrl = new URL('../src/config/env.js', import.meta.url).href;
 const dbModuleUrl = new URL('../src/config/db.js', import.meta.url).href;
 const adminSeedPath = fileURLToPath(new URL('../scripts/seed-admin.js', import.meta.url));
+const productionAuth = {
+  JWT_ACCESS_SECRET: 'M8vQ3xL9pR2nK7cD4wF6yH1jT5sZ0aB2',
+  REFRESH_TOKEN_PEPPER: 'G4uN8mC1qW6eY9kP3rV7xS2dF5hJ0tL8',
+};
 
 function importEnvironment(overrides, omittedKeys = []) {
   const childEnvironment = { ...process.env, ...overrides };
@@ -90,6 +94,7 @@ test('non-test startup rejects the in-memory email provider', () => {
   const result = importEnvironment({
     NODE_ENV: 'production',
     EMAIL_PROVIDER: 'memory',
+    ...productionAuth,
   });
 
   assert.notEqual(result.status, 0);
@@ -101,6 +106,7 @@ test('SMTP configuration requires a host', () => {
     {
       NODE_ENV: 'production',
       EMAIL_PROVIDER: 'smtp',
+      ...productionAuth,
     },
     ['SMTP_HOST'],
   );
@@ -122,6 +128,7 @@ test('production requires an HTTPS verification link', () => {
   const result = importEnvironment({
     NODE_ENV: 'production',
     EMAIL_PROVIDER: 'smtp',
+    ...productionAuth,
     EMAIL_FROM: 'no-reply@example.test',
     EMAIL_VERIFICATION_URL: 'http://app.example.test/verify-email',
     SMTP_HOST: 'smtp.example.test',
@@ -143,4 +150,32 @@ test('SMTP authentication can be omitted with blank env-file values', () => {
   });
 
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+});
+
+test('access tokens are fixed to the accepted 15-minute lifetime', () => {
+  const result = importEnvironment({ ACCESS_TOKEN_TTL_SECONDS: '901' });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /must be 900/);
+});
+
+test('authentication secrets must be independent and production-safe', () => {
+  const sameSecret = 'same-secret-material-with-at-least-32-characters';
+  const same = importEnvironment({
+    JWT_ACCESS_SECRET: sameSecret,
+    REFRESH_TOKEN_PEPPER: sameSecret,
+  });
+  assert.notEqual(same.status, 0);
+  assert.match(`${same.stdout}${same.stderr}`, /must be different/);
+
+  const placeholder = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    SMTP_HOST: 'smtp.example.test',
+    JWT_ACCESS_SECRET: 'replace-with-at-least-32-random-characters',
+    REFRESH_TOKEN_PEPPER: 'another-production-value-with-at-least-32-characters',
+  });
+  assert.notEqual(placeholder.status, 0);
+  assert.match(`${placeholder.stdout}${placeholder.stderr}`, /deployment-specific/);
 });

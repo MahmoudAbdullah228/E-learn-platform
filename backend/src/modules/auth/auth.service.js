@@ -12,7 +12,6 @@ import { generateOneTimeToken, hashOneTimeToken } from '../../utils/oneTimeToken
 
 const PURPOSE = 'email_verification';
 const TTL_MS = 24 * 60 * 60 * 1000;
-
 function invalidToken() {
   return new ApiError(400, 'INVALID_OR_EXPIRED_VERIFICATION_TOKEN',
     'Verification token is invalid or expired');
