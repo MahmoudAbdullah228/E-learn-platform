@@ -1,12 +1,8 @@
 import mongoose from 'mongoose';
+import { setTimeout as wait } from 'node:timers/promises';
 
 import { env } from './env.js';
 import { logger, serializeError } from './logger.js';
-
-const wait = (milliseconds) =>
-  new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
 
 function normalizeMongoDatabaseIdentity(databaseUri) {
   try {
@@ -40,15 +36,21 @@ function assertSafeTestDatabase(databaseUri) {
   }
 }
 
-export async function connectDatabase({ maxRetries = 5, retryDelayMs = 1000 } = {}) {
+export async function connectDatabase({ maxRetries = 5, retryDelayMs = 1000, signal } = {}) {
   assertSafeTestDatabase(env.DATABASE_URI);
 
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    signal?.throwIfAborted();
     try {
       await mongoose.connect(env.DATABASE_URI, { serverSelectionTimeoutMS: 5000 });
+      if (signal?.aborted) {
+        await mongoose.disconnect();
+        signal.throwIfAborted();
+      }
       logger.info({ database: mongoose.connection.name }, 'MongoDB connection established');
       return mongoose.connection;
     } catch (error) {
+      signal?.throwIfAborted();
       const isLastAttempt = attempt === maxRetries;
       logger.error({ attempt, maxRetries, ...serializeError(error) }, 'MongoDB connection failed');
 
@@ -56,7 +58,7 @@ export async function connectDatabase({ maxRetries = 5, retryDelayMs = 1000 } = 
         throw new Error('Unable to connect to MongoDB', { cause: error });
       }
 
-      await wait(retryDelayMs);
+      await wait(retryDelayMs, undefined, { signal });
     }
   }
 

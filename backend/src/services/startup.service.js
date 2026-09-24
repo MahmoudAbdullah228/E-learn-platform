@@ -3,8 +3,15 @@ export async function startHttpServer({
   disconnectDatabase,
   isShuttingDown,
   listen,
+  signal,
 }) {
-  await connectDatabase();
+  try {
+    await connectDatabase({ signal });
+  } catch (error) {
+    if (!signal?.aborted) throw error;
+    await disconnectDatabase();
+    return null;
+  }
 
   if (isShuttingDown()) {
     await disconnectDatabase();

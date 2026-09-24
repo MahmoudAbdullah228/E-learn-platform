@@ -11,5 +11,17 @@ const contract = await parse(contractPath);
 assert.equal(validation.valid, true, 'OpenAPI schema validation failed');
 assert.equal(contract.openapi, '3.1.0');
 assert.ok(contract.paths['/health']?.get, 'GET /health is missing from the OpenAPI contract');
+assert.ok(
+  contract.paths['/auth/register']?.post,
+  'POST /auth/register is missing from the OpenAPI contract',
+);
+assert.ok(
+  contract.paths['/auth/verify-email']?.post,
+  'POST /auth/verify-email is missing from the OpenAPI contract',
+);
+assert.ok(
+  contract.paths['/auth/resend-verification']?.post,
+  'POST /auth/resend-verification is missing from the OpenAPI contract',
+);
 assert.ok(contract.components.schemas.SuccessResponse, 'SuccessResponse schema is missing');
 assert.ok(contract.components.schemas.ErrorResponse, 'ErrorResponse schema is missing');

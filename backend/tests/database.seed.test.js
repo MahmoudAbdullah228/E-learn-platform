@@ -39,6 +39,7 @@ test('admin seed is idempotent and stores only a password hash', async () => {
   assert.equal(secondResult.created, false);
   assert.equal(admins.length, 1);
   assert.deepEqual(admins[0].roles, ['admin']);
+  assert.ok(admins[0].emailVerifiedAt instanceof Date);
   assert.notEqual(admins[0].passwordHash, input.password);
   assert.equal(await bcrypt.compare(input.password, admins[0].passwordHash), false);
   assert.equal(await bcrypt.compare(rotatedPassword, admins[0].passwordHash), true);

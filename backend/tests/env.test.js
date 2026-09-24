@@ -72,6 +72,10 @@ test('admin seed rejects the published example password', () => {
       ...process.env,
       NODE_ENV: 'development',
       MONGO_URI: 'mongodb://127.0.0.1:27017/e_learning_platform',
+      EMAIL_PROVIDER: 'smtp',
+      EMAIL_FROM: 'no-reply@example.test',
+      EMAIL_VERIFICATION_URL: 'http://localhost:5173/verify-email',
+      SMTP_HOST: '127.0.0.1',
       ADMIN_NAME: 'Platform Admin',
       ADMIN_EMAIL: 'admin@example.com',
       ADMIN_PASSWORD: 'replace-with-a-strong-password',
@@ -80,4 +84,63 @@ test('admin seed rejects the published example password', () => {
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /must be changed from the example placeholder/);
+});
+
+test('non-test startup rejects the in-memory email provider', () => {
+  const result = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'memory',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /allowed only when NODE_ENV=test/);
+});
+
+test('SMTP configuration requires a host', () => {
+  const result = importEnvironment(
+    {
+      NODE_ENV: 'production',
+      EMAIL_PROVIDER: 'smtp',
+    },
+    ['SMTP_HOST'],
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /SMTP_HOST is required/);
+});
+
+test('verification links require an HTTP or HTTPS URL', () => {
+  const result = importEnvironment({
+    EMAIL_VERIFICATION_URL: 'ftp://files.example.test/verify-email',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /must use the HTTP or HTTPS protocol/);
+});
+
+test('production requires an HTTPS verification link', () => {
+  const result = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'http://app.example.test/verify-email',
+    SMTP_HOST: 'smtp.example.test',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /HTTPS is required in production/);
+});
+
+test('SMTP authentication can be omitted with blank env-file values', () => {
+  const result = importEnvironment({
+    NODE_ENV: 'development',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'http://localhost:5173/verify-email',
+    SMTP_HOST: '127.0.0.1',
+    SMTP_USER: '',
+    SMTP_PASSWORD: '',
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });

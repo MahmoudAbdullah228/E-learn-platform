@@ -33,6 +33,10 @@ const userSchema = new mongoose.Schema(
       default: 'active',
       required: true,
     },
+    emailVerifiedAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true },
 );

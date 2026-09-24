@@ -13,6 +13,7 @@ test('GET /api/v1/health returns the success envelope', async () => {
   assert.equal(response.body.data.status, 'ok');
   assert.equal(Number.isInteger(response.body.data.uptimeSeconds), true);
   assert.equal(response.headers['x-powered-by'], undefined);
+  assert.equal(app.get('trust proxy'), 0);
 });
 
 test('unknown routes return the standard error envelope', async () => {

@@ -1,10 +1,23 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 0.1.0
-  description: Story 1.1 foundation contract.
+  version: 0.2.0
+  description: |
+    Story 1.1 foundation and Story 1.2 registration/email verification.
+    No login, JWT, refresh cookies, or authenticated routes are implemented yet.
+    Register with a mailbox you control, copy the token from the verification email,
+    then POST it to /auth/verify-email. Tokens expire after 24 hours.
+    Resend returns 202 when the request is queued, not when email arrives.
+    A registration 503 EMAIL_DELIVERY_UNAVAILABLE means the account already exists;
+    offer resend instead of registering it again. All errors use the shared error envelope.
 servers:
   - url: /api/v1
+    description: API on the same host as this documentation
+tags:
+  - name: Health
+    description: Process health
+  - name: Auth
+    description: Student registration and email verification
 paths:
   /health:
     get:
@@ -20,8 +33,103 @@ paths:
                 $ref: '#/components/schemas/HealthResponse'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /auth/register:
+    post:
+      operationId: registerStudent
+      summary: Register a student account and send its verification email
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Student account created and verification email accepted for delivery
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '503':
+          $ref: '#/components/responses/EmailDeliveryError'
+  /auth/verify-email:
+    post:
+      operationId: verifyEmail
+      summary: Consume a one-time token and verify its account email
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '200':
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+  /auth/resend-verification:
+    post:
+      operationId: resendEmailVerification
+      summary: Queue a replacement verification email
+      description: Every valid email request is persisted before responding, without an account lookup or SMTP wait. Background processing sends mail only for active unverified accounts; failed delivery preserves the existing link.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationRequest'
+      responses:
+        '202':
+          description: Request durably queued regardless of account existence or verification state; this does not confirm email delivery
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
 components:
   responses:
+    ValidationError:
+      description: Request data or verification token is invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictError:
+      description: A unique resource such as the normalized email already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimitError:
+      description: Too many requests from the client IP
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    EmailDeliveryError:
+      description: Account was created but email delivery was unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     InternalServerError:
       description: Unexpected server error
       content:
@@ -32,28 +140,157 @@ components:
     SuccessResponse:
       type: object
       required: [data]
-      additionalProperties: false
       properties:
         data: {}
         message:
           type: string
     HealthResponse:
-      allOf:
-        - $ref: '#/components/schemas/SuccessResponse'
-        - type: object
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [status, uptimeSeconds]
+          additionalProperties: false
           properties:
-            data:
-              type: object
-              required: [status, uptimeSeconds]
-              additionalProperties: false
-              properties:
-                status:
-                  const: ok
-                uptimeSeconds:
-                  type: integer
-                  minimum: 0
+            status:
+              const: ok
+            uptimeSeconds:
+              type: integer
+              minimum: 0
+    RegisterRequest:
+      type: object
+      example:
+        name: Frontend Tester
+        email: student@example.com
+        password: Example-password-2026
+      required: [name, email, password]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
+          description: Must not exceed 72 UTF-8 bytes.
+    VerifyEmailRequest:
+      type: object
+      description: Replace the example with the actual token from your email link. The API does not return raw tokens.
+      example:
+        token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          writeOnly: true
+    ResendVerificationRequest:
+      type: object
+      example:
+        email: student@example.com
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    PublicUser:
+      type: object
+      required: [id, name, email, roles, emailVerifiedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+            enum: [student, instructor, admin]
+        emailVerifiedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+    RegistrationResponse:
+      type: object
+      example:
+        data:
+          user:
+            id: 507f1f77bcf86cd799439011
+            name: Frontend Tester
+            email: student@example.com
+            roles: [student]
+            emailVerifiedAt: null
+        message: Registration successful. Check your email to verify your account
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [user]
+          additionalProperties: false
+          properties:
+            user:
+              $ref: '#/components/schemas/PublicUser'
+        message:
+          type: string
+    VerificationResponse:
+      type: object
+      example:
+        data:
+          verified: true
+        message: Email address verified successfully
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [verified]
+          additionalProperties: false
+          properties:
+            verified:
+              const: true
+        message:
+          type: string
+    GenericAcceptedResponse:
+      type: object
+      example:
+        data: {}
+        message: If the account exists and still needs verification, a verification email will be sent
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+        message:
+          type: string
     ErrorResponse:
       type: object
+      example:
+        error:
+          code: VALIDATION_ERROR
+          message: The supplied data is invalid
+          details:
+            - field: email
+              message: Invalid email address
       required: [error]
       additionalProperties: false
       properties:
