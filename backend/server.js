@@ -7,10 +7,12 @@ import { startHttpServer } from './src/services/startup.service.js';
 
 let httpServer;
 let isShuttingDown = false;
+const startupController = new AbortController();
 
 async function startServer() {
   httpServer = await startHttpServer({
     connectDatabase,
+    signal: startupController.signal,
     disconnectDatabase,
     isShuttingDown: () => isShuttingDown,
     listen: () =>
@@ -18,6 +20,7 @@ async function startServer() {
         logger.info({ port: env.PORT }, 'API server listening');
       }),
   });
+  if (httpServer && !isShuttingDown) app.locals.verificationWorker.start();
 }
 
 async function shutdown(signal, exitCode = 0) {
@@ -26,13 +29,16 @@ async function shutdown(signal, exitCode = 0) {
   }
 
   isShuttingDown = true;
+  startupController.abort();
   logger.info({ signal }, 'Graceful shutdown started');
+  const workerStopped = app.locals.verificationWorker.stop();
 
   await closeHttpServer(httpServer, {
     timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
     logger,
   });
 
+  await workerStopped;
   await disconnectDatabase();
   process.exitCode = exitCode;
 }

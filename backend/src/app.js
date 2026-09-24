@@ -5,27 +5,52 @@ import helmet from 'helmet';
 import pinoHttp from 'pino-http';
 
 import { corsOptions } from './config/cors.js';
+import { env } from './config/env.js';
 import { logger, serializeRequest } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
+import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
+import { docsRouter } from './modules/docs/docs.routes.js';
+import { createAuthService } from './modules/auth/auth.service.js';
+import { createSessionService } from './modules/auth/session.service.js';
+import { emailService } from './services/email.service.js';
+import { createVerificationWorker } from './services/verificationWorker.service.js';
 
-export const app = express();
+export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
+  const application = express();
+  const authService = createAuthService({ emailSender: emailSender ?? emailService });
+  const sessionService = createSessionService();
+  application.locals.verificationWorker = createVerificationWorker({
+    deliver: authService.deliverVerificationRequest,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
+  });
 
-app.disable('x-powered-by');
-app.use(
-  pinoHttp({
-    logger,
-    serializers: {
-      req: serializeRequest,
-    },
-  }),
-);
-app.use(helmet());
-app.use(cors(corsOptions));
-app.use(compression());
-app.use(express.json({ limit: '1mb' }));
+  application.disable('x-powered-by');
+  application.set('trust proxy', env.TRUST_PROXY_HOPS);
+  application.use(
+    pinoHttp({
+      logger,
+      serializers: {
+        req: serializeRequest,
+      },
+    }),
+  );
+  application.use(helmet());
+  application.use(cors(corsOptions));
+  application.use(compression());
+  application.use(express.json({ limit: '1mb' }));
 
-app.use('/api/v1/health', healthRouter);
+  application.use('/api/v1/health', healthRouter);
+  application.use('/api/v1', docsRouter);
+  application.use(
+    '/api/v1/auth',
+    createAuthRouter({ authService, sessionService, rateLimitStoreFactory }),
+  );
 
-app.use(notFoundHandler);
-app.use(errorHandler);
+  application.use(notFoundHandler);
+  application.use(errorHandler);
+
+  return application;
+}
+
+export const app = createApp();

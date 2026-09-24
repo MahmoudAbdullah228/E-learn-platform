@@ -44,3 +44,21 @@ test('startup binds only after the database connection succeeds', async () => {
 
   assert.equal(server, expectedServer);
 });
+
+test('cancelled database startup exits cleanly without listening', async () => {
+  const controller = new AbortController();
+  let disconnects = 0;
+  const result = await startHttpServer({
+    signal: controller.signal,
+    connectDatabase: async ({ signal }) => {
+      assert.equal(signal, controller.signal);
+      controller.abort();
+      signal.throwIfAborted();
+    },
+    disconnectDatabase: async () => { disconnects++; },
+    isShuttingDown: () => true,
+    listen: () => assert.fail('Must not listen after cancellation'),
+  });
+  assert.equal(result, null);
+  assert.equal(disconnects, 1);
+});

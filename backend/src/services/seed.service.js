@@ -26,6 +26,7 @@ export async function seedAdmin({ name, email, password }) {
     existingAdmin.passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
     existingAdmin.roles = ['admin'];
     existingAdmin.status = 'active';
+    existingAdmin.emailVerifiedAt ??= new Date();
     await existingAdmin.save();
     return { admin: existingAdmin, created: false };
   }
@@ -36,6 +37,7 @@ export async function seedAdmin({ name, email, password }) {
     passwordHash: await bcrypt.hash(password, env.BCRYPT_ROUNDS),
     roles: ['admin'],
     status: 'active',
+    emailVerifiedAt: new Date(),
   });
 
   return { admin, created: true };
