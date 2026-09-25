@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { nameSchema } from '../../utils/userValidation.js';
+
 const emailSchema = z.string().trim().toLowerCase().email().max(254);
 
 export const refreshTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -14,7 +16,7 @@ export const passwordSchema = z
 
 export const registerSchema = z
   .object({
-    name: z.string().trim().min(2).max(100),
+    name: nameSchema,
     email: emailSchema,
     password: passwordSchema,
   })

@@ -14,6 +14,8 @@ import { docsRouter } from './modules/docs/docs.routes.js';
 import { createAuthService } from './modules/auth/auth.service.js';
 import { createSessionService } from './modules/auth/session.service.js';
 import { createPasswordResetService } from './modules/auth/passwordReset.service.js';
+import { createUsersRouter } from './modules/users/users.routes.js';
+import { createUsersService } from './modules/users/users.service.js';
 import { emailService } from './services/email.service.js';
 import { createAuthEmailWorker } from './services/authEmailWorker.service.js';
 
@@ -24,6 +26,7 @@ export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
     emailSender: emailSender ?? emailService,
   });
   const sessionService = createSessionService();
+  const usersService = createUsersService();
   const deliveryHandlers = Object.freeze({
     email_verification: authService.deliverVerificationRequest,
     password_reset: passwordResetService.deliverResetRequest,
@@ -63,6 +66,7 @@ export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
       rateLimitStoreFactory,
     }),
   );
+  application.use('/api/v1/users', createUsersRouter({ usersService }));
 
   application.use(notFoundHandler);
   application.use(errorHandler);
