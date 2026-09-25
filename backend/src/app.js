@@ -13,15 +13,27 @@ import { healthRouter } from './modules/health/health.routes.js';
 import { docsRouter } from './modules/docs/docs.routes.js';
 import { createAuthService } from './modules/auth/auth.service.js';
 import { createSessionService } from './modules/auth/session.service.js';
+import { createPasswordResetService } from './modules/auth/passwordReset.service.js';
 import { emailService } from './services/email.service.js';
-import { createVerificationWorker } from './services/verificationWorker.service.js';
+import { createAuthEmailWorker } from './services/authEmailWorker.service.js';
 
 export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
   const application = express();
   const authService = createAuthService({ emailSender: emailSender ?? emailService });
+  const passwordResetService = createPasswordResetService({
+    emailSender: emailSender ?? emailService,
+  });
   const sessionService = createSessionService();
-  application.locals.verificationWorker = createVerificationWorker({
-    deliver: authService.deliverVerificationRequest,
+  const deliveryHandlers = Object.freeze({
+    email_verification: authService.deliverVerificationRequest,
+    password_reset: passwordResetService.deliverResetRequest,
+  });
+  application.locals.authEmailWorker = createAuthEmailWorker({
+    deliver: ({ purpose, ...request }) => {
+      const handler = deliveryHandlers[purpose];
+      if (!handler) throw new Error('Unsupported authentication email purpose');
+      return handler(request);
+    },
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
   });
 
@@ -44,7 +56,12 @@ export function createApp({ emailSender, rateLimitStoreFactory } = {}) {
   application.use('/api/v1', docsRouter);
   application.use(
     '/api/v1/auth',
-    createAuthRouter({ authService, sessionService, rateLimitStoreFactory }),
+    createAuthRouter({
+      authService,
+      passwordResetService,
+      sessionService,
+      rateLimitStoreFactory,
+    }),
   );
 
   application.use(notFoundHandler);

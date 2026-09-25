@@ -79,6 +79,7 @@ test('admin seed rejects the published example password', () => {
       EMAIL_PROVIDER: 'smtp',
       EMAIL_FROM: 'no-reply@example.test',
       EMAIL_VERIFICATION_URL: 'http://localhost:5173/verify-email',
+      PASSWORD_RESET_URL: 'http://localhost:5173/reset-password',
       SMTP_HOST: '127.0.0.1',
       ADMIN_NAME: 'Platform Admin',
       ADMIN_EMAIL: 'admin@example.com',
@@ -131,11 +132,37 @@ test('production requires an HTTPS verification link', () => {
     ...productionAuth,
     EMAIL_FROM: 'no-reply@example.test',
     EMAIL_VERIFICATION_URL: 'http://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
     SMTP_HOST: 'smtp.example.test',
   });
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /HTTPS is required in production/);
+});
+
+test('password reset links are required and allow only HTTP(S)', () => {
+  const missing = importEnvironment({}, ['PASSWORD_RESET_URL']);
+  assert.notEqual(missing.status, 0);
+  assert.match(`${missing.stdout}${missing.stderr}`, /PASSWORD_RESET_URL is required/);
+
+  const unsafe = importEnvironment({ PASSWORD_RESET_URL: 'ftp://files.example.test/reset' });
+  assert.notEqual(unsafe.status, 0);
+  assert.match(`${unsafe.stdout}${unsafe.stderr}`, /PASSWORD_RESET_URL: must use the HTTP or HTTPS protocol/);
+});
+
+test('production requires an HTTPS password reset link', () => {
+  const result = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    ...productionAuth,
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'http://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /PASSWORD_RESET_URL: HTTPS is required in production/);
 });
 
 test('SMTP authentication can be omitted with blank env-file values', () => {
@@ -144,6 +171,7 @@ test('SMTP authentication can be omitted with blank env-file values', () => {
     EMAIL_PROVIDER: 'smtp',
     EMAIL_FROM: 'no-reply@example.test',
     EMAIL_VERIFICATION_URL: 'http://localhost:5173/verify-email',
+    PASSWORD_RESET_URL: 'http://localhost:5173/reset-password',
     SMTP_HOST: '127.0.0.1',
     SMTP_USER: '',
     SMTP_PASSWORD: '',
@@ -172,6 +200,7 @@ test('authentication secrets must be independent and production-safe', () => {
     EMAIL_PROVIDER: 'smtp',
     EMAIL_FROM: 'no-reply@example.test',
     EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
     SMTP_HOST: 'smtp.example.test',
     JWT_ACCESS_SECRET: 'replace-with-at-least-32-random-characters',
     REFRESH_TOKEN_PEPPER: 'another-production-value-with-at-least-32-characters',

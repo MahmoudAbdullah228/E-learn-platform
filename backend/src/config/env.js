@@ -36,6 +36,7 @@ const environmentSchema = z
     EMAIL_PROVIDER: z.enum(['smtp', 'memory']).default('smtp'),
     EMAIL_FROM: z.string().trim().email().optional(),
     EMAIL_VERIFICATION_URL: z.string().trim().url().optional(),
+    PASSWORD_RESET_URL: z.string().trim().url().optional(),
     SMTP_HOST: z.string().trim().min(1).optional(),
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
     SMTP_SECURE: z
@@ -67,6 +68,10 @@ const environmentSchema = z
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     REFRESH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(60),
+    LOGOUT_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(30),
+    LOGOUT_ALL_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    FORGOT_PASSWORD_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
+    RESET_PASSWORD_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     AUTH_RATE_LIMIT_WINDOW_MS: z.coerce
       .number()
       .int()
@@ -104,6 +109,14 @@ const environmentSchema = z
         code: 'custom',
         path: ['EMAIL_VERIFICATION_URL'],
         message: 'EMAIL_VERIFICATION_URL is required',
+      });
+    }
+
+    if (!values.PASSWORD_RESET_URL) {
+      context.addIssue({
+        code: 'custom',
+        path: ['PASSWORD_RESET_URL'],
+        message: 'PASSWORD_RESET_URL is required',
       });
     }
 
@@ -182,16 +195,21 @@ for (const origin of corsOrigins) {
 }
 
 const verificationUrl = new URL(parsed.EMAIL_VERIFICATION_URL);
-if (!['http:', 'https:'].includes(verificationUrl.protocol)) {
-  throw new Error(
-    'Invalid environment variables:\nEMAIL_VERIFICATION_URL: must use the HTTP or HTTPS protocol',
-  );
-}
-
-if (parsed.NODE_ENV === 'production' && verificationUrl.protocol !== 'https:') {
-  throw new Error(
-    'Invalid environment variables:\nEMAIL_VERIFICATION_URL: HTTPS is required in production',
-  );
+const passwordResetUrl = new URL(parsed.PASSWORD_RESET_URL);
+for (const [name, url] of [
+  ['EMAIL_VERIFICATION_URL', verificationUrl],
+  ['PASSWORD_RESET_URL', passwordResetUrl],
+]) {
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(
+      `Invalid environment variables:\n${name}: must use the HTTP or HTTPS protocol`,
+    );
+  }
+  if (parsed.NODE_ENV === 'production' && url.protocol !== 'https:') {
+    throw new Error(
+      `Invalid environment variables:\n${name}: HTTPS is required in production`,
+    );
+  }
 }
 
 export const env = Object.freeze({

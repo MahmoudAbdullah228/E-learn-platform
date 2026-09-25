@@ -7,6 +7,26 @@ import { app } from '../src/app.js';
 import { serializeError, serializeRequest } from '../src/config/logger.js';
 import { errorHandler } from '../src/middlewares/errorHandler.js';
 
+test('configured origin receives a credentialed CORS preflight response', async () => {
+  const response = await request(app).options('/api/v1/auth/login')
+    .set('Origin', 'http://localhost:5173')
+    .set('Access-Control-Request-Method', 'POST')
+    .set('Access-Control-Request-Headers', 'content-type').expect(204);
+  assert.equal(response.headers['access-control-allow-origin'], 'http://localhost:5173');
+  assert.equal(response.headers['access-control-allow-credentials'], 'true');
+  assert.match(response.headers['access-control-allow-methods'], /POST/);
+  assert.match(response.headers['access-control-allow-headers'], /content-type/i);
+});
+
+test('responses retain browser security headers and large contracts support gzip', async () => {
+  const response = await request(app).get('/api/v1/openapi.json')
+    .set('Accept-Encoding', 'gzip').expect(200);
+  assert.equal(response.headers['content-encoding'], 'gzip');
+  assert.equal(response.headers['x-content-type-options'], 'nosniff');
+  assert.equal(response.headers['x-frame-options'], 'SAMEORIGIN');
+  assert.match(response.headers['strict-transport-security'], /max-age=/);
+});
+
 test('GET /api/v1/health returns the success envelope', async () => {
   const response = await request(app).get('/api/v1/health').expect(200);
 

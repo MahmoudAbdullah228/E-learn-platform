@@ -1,6 +1,6 @@
 # E-Learning Marketplace API
 
-Stories 1.1 through 1.3 provide the production-oriented foundation, registration, email verification, and secure session management. Courses and payments remain outside the current scope.
+Stories 1.1 through 1.4 provide the production-oriented foundation, registration, email verification, secure session management, and password reset. Courses and payments remain outside the current scope.
 
 ## Requirements
 
@@ -60,6 +60,19 @@ POST /api/v1/auth/logout-all
 
 Access tokens are signed JWTs that expire after 15 minutes. Refresh tokens are opaque, stored only in an HttpOnly cookie, and represented by keyed hashes in MongoDB. Every refresh rotates the token; reuse of an older token revokes that device's session family. Logout ends one device session, while logout-all invalidates every refresh session and existing access token for the user.
 
+Story 1.4 adds:
+
+```text
+POST /api/v1/auth/forgot-password
+POST /api/v1/auth/reset-password
+```
+
+Reset-token hashes and expiry live in the hidden `User.passwordReset` fields. Consumption checks the current hash and expiry, clears the token, changes the password, and increments the session version in one atomic write. Issuance holds a bounded per-user lease; consumption during that lease returns `409 PASSWORD_RESET_IN_PROGRESS`. Failed delivery releases the lease and preserves the previous link. Expired or superseded issuers cannot activate a late SMTP result.
+
+Local upgrade note: reset links from the earlier Story 1.4 draft stored in `OneTimeToken` are intentionally no longer accepted; request a new reset email. Existing accounts and verification links are unaffected. Expired embedded reset hashes are rejected explicitly and overwritten on the next issuance; no TTL index is placed on users.
+
+Forgot-password always returns the same `202` response and durably queues the request before any account lookup, preventing account enumeration. The worker sends mail only for active accounts. Reset tokens expire after 30 minutes, are stored only as hashes, and can change the password once. A successful reset atomically advances both password and session versions, immediately invalidating every existing access and refresh token even if best-effort session cleanup fails.
+
 Each family allows at most 4096 successful refresh rotations. The next refresh revokes the family and returns `401 INVALID_REFRESH_TOKEN`, requiring login again. The bound is enforced atomically with the hash append. No historical hashes are evicted, preserving replay detection for the whole family lifetime while bounding document and index growth. Existing families already at or above the limit are revoked on their next refresh.
 
 Worker shutdown tracks scheduled and directly invoked jobs. At the drain deadline it signals cancellation, preventing subsequent delivery steps and job acknowledgement. Already-dispatched database writes or SMTP requests cannot be recalled; SMTP acceptance is not proof of token activation, and expired leases permit recovery.
@@ -68,7 +81,7 @@ JWTs carry a session identifier. Authentication checks the current user, token v
 
 Login, refresh, and logout require an allowed `Origin`, or an allowed `Referer` when `Origin` is absent. Missing or malformed sources return `403 REQUEST_ORIGIN_DENIED`; explicit disallowed origins are rejected by CORS. CLI and Postman clients must send an allowed `Origin` explicitly. `SameSite=Lax` assumes a same-site frontend/API deployment; cross-site cookie deployment is not enabled. Access-token responses use `Cache-Control: no-store`.
 
-Resend returns `202` after persisting a request in MongoDB, without looking up the account or waiting for SMTP. The server runs a verification worker that checks eligibility and sends the email. Jobs contain an email address, never raw tokens; they expire after 24 hours. A worker claims each job atomically with a ten-minute lease, retries failures up to three attempts with a one-minute delay, and removes completed jobs. Expired leases allow recovery after a restart. Delivery is at-least-once: a crash between SMTP acceptance and job completion may cause a replacement email.
+Resend and forgot-password return `202` after persisting a request in MongoDB, without looking up the account or waiting for SMTP. The server runs one authentication-email worker that checks eligibility and sends the appropriate email. Jobs contain an email address and purpose, never raw tokens; they expire after 24 hours. A worker claims each job atomically with a ten-minute lease, retries failures up to three attempts with a one-minute delay, and removes completed jobs. Expired leases allow recovery after a restart. Delivery is at-least-once: a crash between SMTP acceptance and job completion may cause a replacement email.
 
 The existing verification token remains valid until SMTP accepts a replacement and its hash is saved. If that database write fails, the original remains usable and the job retries; an accepted email alone cannot prove the new link was activated. Verification uses an atomic `emailVerifiedAt: null` user update to prevent replay. Token cleanup follows that update; cleanup failure cannot make an already verified account accept the token again. This works on standalone MongoDB without multi-document transactions.
 
@@ -112,6 +125,7 @@ See `docs/frontend-handoff.md` for the integration flow and error handling.
 | `EMAIL_PROVIDER` | `smtp` normally; `memory` is accepted only during tests |
 | `EMAIL_FROM` | Sender email address used for verification messages |
 | `EMAIL_VERIFICATION_URL` | Frontend HTTP(S) page that receives the opaque token query parameter |
+| `PASSWORD_RESET_URL` | Frontend HTTP(S) page that receives the password-reset token query parameter |
 | `SMTP_HOST` / `SMTP_PORT` | SMTP server address |
 | `SMTP_SECURE` | Use implicit TLS (`true`, normally on port 465) |
 | `SMTP_USER` / `SMTP_PASSWORD` | Optional SMTP credentials; both must be provided together |
@@ -124,13 +138,17 @@ See `docs/frontend-handoff.md` for the integration flow and error handling.
 | `RESEND_RATE_LIMIT_MAX` | Resend attempts allowed per window and IP |
 | `LOGIN_RATE_LIMIT_MAX` | Login attempts allowed per window and IP |
 | `REFRESH_RATE_LIMIT_MAX` | Refresh attempts allowed per window and IP |
+| `LOGOUT_RATE_LIMIT_MAX` | Current-device logout attempts per window and IP, default 30 |
+| `LOGOUT_ALL_RATE_LIMIT_MAX` | All-device logout attempts per window and IP, default 10 |
+| `FORGOT_PASSWORD_RATE_LIMIT_MAX` | Password-reset email requests allowed per window and IP |
+| `RESET_PASSWORD_RATE_LIMIT_MAX` | Password-reset token attempts allowed per window and IP |
 | `ADMIN_NAME` | Admin seed display name |
 | `ADMIN_EMAIL` | Admin seed email address |
 | `ADMIN_PASSWORD` | Admin seed password; must be set explicitly and contain 12-72 UTF-8 bytes |
 
 Never commit `.env`. Logs redact authorization, cookies, password fields, and password hashes.
 
-Production requires an HTTPS `EMAIL_VERIFICATION_URL`, TLS-protected SMTP, and independent deployment-specific authentication secrets. The built-in rate limiter uses process memory and is suitable for a single API instance. Multi-instance deployments must inject a separate shared-store adapter for each limiter through `rateLimitStoreFactory`. Set `TRUST_PROXY_HOPS` to the exact number of trusted proxy hops in the deployment; do not enable broad proxy trust.
+Production requires HTTPS `EMAIL_VERIFICATION_URL` and `PASSWORD_RESET_URL` values, TLS-protected SMTP, and independent deployment-specific authentication secrets. The built-in rate limiter uses process memory and is suitable for a single API instance. Multi-instance deployments must inject a separate shared-store adapter for each limiter through `rateLimitStoreFactory`. Set `TRUST_PROXY_HOPS` to the exact number of trusted proxy hops in the deployment; do not enable broad proxy trust.
 
 ## Commands
 

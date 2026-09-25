@@ -59,5 +59,29 @@ export function createAuthRateLimiters({ storeFactory } = {}) {
       message: 'Too many session refresh attempts. Please try again later',
       store: storeFactory?.('refresh'),
     }),
+    forgotPassword: createAuthRateLimiter({
+      limit: env.FORGOT_PASSWORD_RATE_LIMIT_MAX,
+      code: 'PASSWORD_RESET_REQUEST_RATE_LIMITED',
+      message: 'Too many password reset requests. Please try again later',
+      store: storeFactory?.('forgot-password'),
+    }),
+    resetPassword: createAuthRateLimiter({
+      limit: env.RESET_PASSWORD_RATE_LIMIT_MAX,
+      code: 'PASSWORD_RESET_RATE_LIMITED',
+      message: 'Too many password reset attempts. Please try again later',
+      store: storeFactory?.('reset-password'),
+    }),
+    logout: createAuthRateLimiter({
+      limit: env.LOGOUT_RATE_LIMIT_MAX,
+      code: 'LOGOUT_RATE_LIMITED',
+      message: 'Too many sign-out requests. Please try again later',
+      store: storeFactory?.('logout'),
+    }),
+    logoutAll: createAuthRateLimiter({
+      limit: env.LOGOUT_ALL_RATE_LIMIT_MAX,
+      code: 'LOGOUT_ALL_RATE_LIMITED',
+      message: 'Too many sign-out requests. Please try again later',
+      store: storeFactory?.('logout-all'),
+    }),
   });
 }
