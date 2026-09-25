@@ -22,8 +22,15 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 8);
-  for (const path of ['/auth/login', '/auth/refresh', '/auth/logout', '/auth/logout-all']) {
+  assert.equal(Object.keys(json.body.paths).length, 10);
+  for (const path of [
+    '/auth/login',
+    '/auth/refresh',
+    '/auth/logout',
+    '/auth/logout-all',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+  ]) {
     assert.ok(json.body.paths[path]?.post, `${path} is missing`);
   }
   const yaml = await request(app).get('/api/v1/openapi.yaml').expect(200);

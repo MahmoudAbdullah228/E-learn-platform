@@ -1,9 +1,10 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    Story 1.1 foundation, Story 1.2 registration/email verification, and Story 1.3 session management.
+    Stories 1.1 through 1.4: foundation, registration/email verification,
+    session management, and secure password reset.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -12,6 +13,8 @@ info:
     Login, refresh, and logout require an allowed Origin, or Referer when Origin is absent.
     CLI clients must send an allowed Origin explicitly. Configure the local Swagger origin too.
     Coordinate refresh requests; simultaneous reuse revokes the device family and its access tokens.
+    Forgot-password always returns the same accepted response. Reset links expire after 30 minutes,
+    work once, and invalidate all existing sessions after a successful password change.
 servers:
   - url: /api/v1
     description: API on the same host as this documentation
@@ -19,7 +22,7 @@ tags:
   - name: Health
     description: Process health
   - name: Auth
-    description: Registration, email verification, and session management
+    description: Registration, email verification, session management, and password reset
 paths:
   /health:
     get:
@@ -175,12 +178,19 @@ paths:
       responses:
         '200':
           description: Current session ended and refresh cookie cleared
+          headers:
+            Set-Cookie:
+              description: Expires the HttpOnly refresh_token cookie at /api/v1/auth
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptySuccessResponse'
         '403':
           $ref: '#/components/responses/ForbiddenError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
   /auth/logout-all:
     post:
       operationId: logoutAll
@@ -191,12 +201,76 @@ paths:
       responses:
         '200':
           description: All sessions and existing access tokens invalidated
+          headers:
+            Set-Cookie:
+              description: Expires the HttpOnly refresh_token cookie at /api/v1/auth
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptySuccessResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+  /auth/forgot-password:
+    post:
+      operationId: forgotPassword
+      summary: Queue a password-reset email without revealing account existence
+      description: Every valid email request is persisted before responding. Background processing sends mail only for active accounts.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '202':
+          description: Request durably queued regardless of account existence; this does not confirm delivery
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+  /auth/reset-password:
+    post:
+      operationId: resetPassword
+      summary: Consume a one-time token and set a new password
+      description: On success, every existing access and refresh session is invalidated and the refresh cookie is cleared. During replacement email issuance, a still-valid old token returns 409 PASSWORD_RESET_IN_PROGRESS; retry shortly or use the replacement link.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password changed and all previous sessions invalidated
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: Clears the HttpOnly refresh_token cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasswordResetResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: A replacement reset email is being sent (PASSWORD_RESET_IN_PROGRESS)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
 components:
   securitySchemes:
     bearerAuth:
@@ -222,6 +296,20 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     RateLimitError:
       description: Too many requests from the client IP
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: integer
+            minimum: 1
+        RateLimit:
+          description: Combined quota information using draft-8 format
+          schema:
+            type: string
+        RateLimit-Policy:
+          description: Quota and window policy using draft-8 format
+          schema:
+            type: string
       content:
         application/json:
           schema:
@@ -339,6 +427,36 @@ components:
           minLength: 1
           maxLength: 128
           description: Must not exceed 72 UTF-8 bytes.
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      example:
+        email: student@example.com
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    ResetPasswordRequest:
+      type: object
+      required: [token, password]
+      additionalProperties: false
+      example:
+        token: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        password: New-example-password-2026
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          writeOnly: true
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
+          description: Must not exceed 72 UTF-8 bytes.
     PublicUser:
       type: object
       required: [id, name, email, roles, emailVerifiedAt]
@@ -415,6 +533,31 @@ components:
           additionalProperties: false
         message:
           type: string
+    PasswordResetAcceptedResponse:
+      type: object
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+        message:
+          type: string
+          example: If the account exists, a password reset email will be sent
+    PasswordResetResponse:
+      type: object
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [passwordReset]
+          additionalProperties: false
+          properties:
+            passwordReset:
+              const: true
+        message:
+          type: string
     LoginResponse:
       type: object
       required: [data, message]
@@ -480,6 +623,22 @@ components:
           properties:
             code:
               type: string
+              description: Stable machine-readable code; examples below are non-exhaustive.
+              examples:
+                - VALIDATION_ERROR
+                - INVALID_OR_EXPIRED_VERIFICATION_TOKEN
+                - INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN
+                - PASSWORD_RESET_IN_PROGRESS
+                - INVALID_CREDENTIALS
+                - INVALID_REFRESH_TOKEN
+                - AUTHENTICATION_REQUIRED
+                - ACCOUNT_SUSPENDED
+                - EMAIL_NOT_VERIFIED
+                - LOGOUT_RATE_LIMITED
+                - LOGOUT_ALL_RATE_LIMITED
+                - INVALID_JSON
+                - PAYLOAD_TOO_LARGE
+                - ROUTE_NOT_FOUND
             message:
               type: string
             details:

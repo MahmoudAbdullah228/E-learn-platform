@@ -20,7 +20,7 @@ async function startServer() {
         logger.info({ port: env.PORT }, 'API server listening');
       }),
   });
-  if (httpServer && !isShuttingDown) app.locals.verificationWorker.start();
+  if (httpServer && !isShuttingDown) app.locals.authEmailWorker.start();
 }
 
 async function shutdown(signal, exitCode = 0) {
@@ -31,7 +31,7 @@ async function shutdown(signal, exitCode = 0) {
   isShuttingDown = true;
   startupController.abort();
   logger.info({ signal }, 'Graceful shutdown started');
-  const workerStopped = app.locals.verificationWorker.stop();
+  const workerStopped = app.locals.authEmailWorker.stop();
 
   await closeHttpServer(httpServer, {
     timeoutMs: env.SHUTDOWN_TIMEOUT_MS,

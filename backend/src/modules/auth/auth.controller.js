@@ -27,7 +27,7 @@ function setRefreshCookie(response, token, expiresAt) {
   response.cookie(REFRESH_COOKIE_NAME, token, createRefreshCookieOptions(expiresAt));
 }
 
-export function createAuthController({ authService, sessionService }) {
+export function createAuthController({ authService, passwordResetService, sessionService }) {
   return Object.freeze({
     async register(request, response) {
       const user = await authService.register(request.validatedBody);
@@ -95,6 +95,24 @@ export function createAuthController({ authService, sessionService }) {
       await sessionService.logoutAll({ userId: request.auth.userId });
       response.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions);
       response.status(200).json({ data: {}, message: 'Signed out from all devices successfully' });
+    },
+
+    async forgotPassword(request, response) {
+      await passwordResetService.requestReset(request.validatedBody);
+      response.status(202).json({
+        data: {},
+        message: 'If the account exists, a password reset email will be sent',
+      });
+    },
+
+    async resetPassword(request, response) {
+      response.set('Cache-Control', 'no-store');
+      const result = await passwordResetService.resetPassword(request.validatedBody);
+      response.clearCookie(REFRESH_COOKIE_NAME, clearRefreshCookieOptions);
+      response.status(200).json({
+        data: result,
+        message: 'Password reset successfully. Sign in again with your new password',
+      });
     },
   });
 }

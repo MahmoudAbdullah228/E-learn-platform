@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger, serializeError } from '../config/logger.js';
-import { VerificationRequest } from '../models/VerificationRequest.js';
+import { AuthEmailRequest } from '../models/AuthEmailRequest.js';
 
 const LEASE_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 
-export function createVerificationWorker({ deliver, clock = () => new Date(), shutdownTimeoutMs = 10_000 }) {
+export function createAuthEmailWorker({ deliver, clock = () => new Date(), shutdownTimeoutMs = 10_000 }) {
   let timer;
   let running;
   let stopped = false;
@@ -16,7 +16,7 @@ export function createVerificationWorker({ deliver, clock = () => new Date(), sh
     if (stopped) return false;
     const now = clock();
     const leaseId = randomUUID();
-    const job = await VerificationRequest.findOneAndUpdate(
+    const job = await AuthEmailRequest.findOneAndUpdate(
       { availableAt: { $lte: now }, expiresAt: { $gt: now }, attempts: { $lt: MAX_ATTEMPTS } },
       { $set: { leaseId, availableAt: new Date(now.getTime() + LEASE_MS) }, $inc: { attempts: 1 } },
       { returnDocument: 'after', sort: { availableAt: 1 } },
@@ -24,16 +24,21 @@ export function createVerificationWorker({ deliver, clock = () => new Date(), sh
     if (!job) return false;
     try {
       if (stopped) return false;
-      await deliver({ email: job.email, requestedAt: job.createdAt, signal: controller.signal });
+      await deliver({
+        email: job.email,
+        purpose: job.purpose,
+        requestedAt: job.createdAt,
+        signal: controller.signal,
+      });
       if (controller.signal.aborted) return false;
-      await VerificationRequest.deleteOne({ _id: job._id, leaseId });
+      await AuthEmailRequest.deleteOne({ _id: job._id, leaseId });
     } catch (error) {
       if (controller.signal.aborted) return false;
-      logger.error(serializeError(error), 'Verification request delivery failed');
+      logger.error(serializeError(error), 'Authentication email delivery failed');
       if (job.attempts >= MAX_ATTEMPTS) {
-        await VerificationRequest.deleteOne({ _id: job._id, leaseId });
+        await AuthEmailRequest.deleteOne({ _id: job._id, leaseId });
       } else {
-        await VerificationRequest.updateOne({ _id: job._id, leaseId }, {
+        await AuthEmailRequest.updateOne({ _id: job._id, leaseId }, {
           $set: { availableAt: new Date(clock().getTime() + 60_000), leaseId: null },
         });
       }
@@ -48,7 +53,7 @@ export function createVerificationWorker({ deliver, clock = () => new Date(), sh
   }
 
   function tick() {
-    void processNext().catch(error => logger.error(serializeError(error), 'Verification worker failed'));
+    void processNext().catch(error => logger.error(serializeError(error), 'Authentication email worker failed'));
   }
 
   return {

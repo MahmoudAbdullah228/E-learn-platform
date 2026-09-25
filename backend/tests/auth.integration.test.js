@@ -12,9 +12,9 @@ import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { OneTimeToken } from '../src/models/OneTimeToken.js';
 import { RefreshSession } from '../src/models/RefreshSession.js';
 import { User } from '../src/models/User.js';
-import { VerificationRequest } from '../src/models/VerificationRequest.js';
+import { AuthEmailRequest } from '../src/models/AuthEmailRequest.js';
 import { createAuthService } from '../src/modules/auth/auth.service.js';
-import { createVerificationWorker } from '../src/services/verificationWorker.service.js';
+import { createAuthEmailWorker } from '../src/services/authEmailWorker.service.js';
 import { authenticate, authorize } from '../src/middlewares/authenticate.js';
 import { errorHandler } from '../src/middlewares/errorHandler.js';
 import { hashOneTimeToken } from '../src/utils/oneTimeToken.js';
@@ -27,7 +27,10 @@ const request = (application) => supertest.agent(application).set('Origin', 'htt
 const deliveredEmails = [];
 const emailSender = {
   async sendEmailVerification(message) {
-    deliveredEmails.push(message);
+    deliveredEmails.push({ ...message, purpose: 'email_verification' });
+  },
+  async sendPasswordReset(message) {
+    deliveredEmails.push({ ...message, purpose: 'password_reset' });
   },
 };
 const app = createApp({ emailSender });
@@ -45,14 +48,14 @@ const validRegistration = {
 before(async () => {
   await connectDatabase({ maxRetries: 1 });
   assert.match(mongoose.connection.name, /_test$/);
-  await Promise.all([User.init(), OneTimeToken.init(), VerificationRequest.init(),
+  await Promise.all([User.init(), OneTimeToken.init(), AuthEmailRequest.init(),
     RefreshSession.init()]);
 });
 
 beforeEach(async () => {
   deliveredEmails.length = 0;
   await Promise.all([User.deleteMany({}), OneTimeToken.deleteMany({}),
-    VerificationRequest.deleteMany({}), RefreshSession.deleteMany({})]);
+    AuthEmailRequest.deleteMany({}), RefreshSession.deleteMany({})]);
 });
 
 function getRefreshCookie(response) {
@@ -178,7 +181,7 @@ test('resend rotates the token and returns the same response for unknown account
     .post('/api/v1/auth/resend-verification')
     .send({ email: 'STUDENT@example.com' })
     .expect(202);
-  await app.locals.verificationWorker.processNext();
+  await app.locals.authEmailWorker.processNext();
   const secondToken = deliveredEmails[1].token;
   assert.notEqual(secondToken, firstToken);
   assert.equal(await OneTimeToken.countDocuments({ userId: user.id }), 1);
@@ -193,7 +196,7 @@ test('resend rotates the token and returns the same response for unknown account
     .expect(202);
 
   assert.deepEqual(unknownResponse.body, existingResponse.body);
-  await app.locals.verificationWorker.processNext();
+  await app.locals.authEmailWorker.processNext();
   assert.equal(deliveredEmails.length, 2);
 });
 
@@ -209,7 +212,7 @@ test('resend does not send another email after verification', async () => {
     .send({ email: validRegistration.email })
     .expect(202);
 
-  await app.locals.verificationWorker.processNext();
+  await app.locals.authEmailWorker.processNext();
   assert.equal(deliveredEmails.length, 1);
 });
 
@@ -237,7 +240,7 @@ test('suspended accounts cannot verify or receive replacement verification email
 
   const user = await User.findOne({ email: 'student@example.com' }).lean();
   assert.equal(user.emailVerifiedAt, null);
-  await app.locals.verificationWorker.processNext();
+  await app.locals.authEmailWorker.processNext();
   assert.equal(deliveredEmails.length, 1);
 });
 
@@ -289,7 +292,7 @@ test('resend keeps its generic response when email delivery fails', async () => 
 
   assert.equal(response.body.message.includes('If the account exists'), true);
   assert.equal(JSON.stringify(response.body).includes('secret'), false);
-  await failingApp.locals.verificationWorker.processNext();
+  await failingApp.locals.authEmailWorker.processNext();
 
   const restoredTokenRecord = await OneTimeToken.findOne({ userId: user.id })
     .select('+tokenHash')
@@ -366,7 +369,7 @@ test('resend enqueues every account state without waiting for delivery or readin
       .send({ email }).expect(202));
   }
   assert.deepEqual(responses[0].body, responses[1].body);
-  assert.equal(await VerificationRequest.countDocuments(), 2);
+  assert.equal(await AuthEmailRequest.countDocuments(), 2);
   find.mock.restore();
 });
 
@@ -392,29 +395,29 @@ test('a failed delivery cannot replace a concurrently delivered token', async ()
 });
 
 test('two workers cannot claim the same queued request while its lease is active', async () => {
-  await VerificationRequest.create({ email: 'job@example.com', availableAt: new Date(),
+  await AuthEmailRequest.create({ email: 'job@example.com', availableAt: new Date(),
     expiresAt: new Date(Date.now() + 86_400_000) });
   let release;
   let entered;
   const started = new Promise(resolve => { entered = resolve; });
-  const first = createVerificationWorker({ deliver: async () => {
+  const first = createAuthEmailWorker({ deliver: async () => {
     entered();
     await new Promise(resolve => { release = resolve; });
   } });
-  const second = createVerificationWorker({ deliver: async () => assert.fail('Duplicate delivery') });
+  const second = createAuthEmailWorker({ deliver: async () => assert.fail('Duplicate delivery') });
   const processing = first.processNext();
   await started;
   try { assert.equal(await second.processNext(), false); }
   finally { release(); await processing; }
-  assert.equal(await VerificationRequest.countDocuments(), 0);
+  assert.equal(await AuthEmailRequest.countDocuments(), 0);
 });
 
 test('queued failures retry with backoff and stop after three attempts', async () => {
   let now = new Date();
-  await VerificationRequest.create({ email: 'job@example.com', availableAt: now,
+  await AuthEmailRequest.create({ email: 'job@example.com', availableAt: now,
     expiresAt: new Date(now.getTime() + 86_400_000) });
   let calls = 0;
-  const worker = createVerificationWorker({ clock: () => now, deliver: async () => {
+  const worker = createAuthEmailWorker({ clock: () => now, deliver: async () => {
     calls++;
     throw new Error('Unavailable');
   } });
@@ -424,19 +427,19 @@ test('queued failures retry with backoff and stop after three attempts', async (
     now = new Date(now.getTime() + 60_001);
   }
   assert.equal(calls, 3);
-  assert.equal(await VerificationRequest.countDocuments(), 0);
+  assert.equal(await AuthEmailRequest.countDocuments(), 0);
 });
 
 test('a replacement worker recovers an expired lease but ignores expired jobs', async () => {
   const now = new Date();
-  await VerificationRequest.create([
+  await AuthEmailRequest.create([
     { email: 'recover@example.com', availableAt: new Date(now.getTime() - 1),
       expiresAt: new Date(now.getTime() + 86_400_000), leaseId: 'abandoned', attempts: 1 },
     { email: 'expired@example.com', availableAt: new Date(now.getTime() - 1000),
       expiresAt: new Date(now.getTime() - 1) },
   ]);
   const recipients = [];
-  const worker = createVerificationWorker({ clock: () => now, deliver: async ({ email }) => {
+  const worker = createAuthEmailWorker({ clock: () => now, deliver: async ({ email }) => {
     recipients.push(email);
   } });
   assert.equal(await worker.processNext(), true);
@@ -492,13 +495,13 @@ test('concurrent and queued resend requests produce one accepted replacement', a
 });
 
 test('worker shutdown aborts a stuck delivery at its deadline and retains the job', async () => {
-  await VerificationRequest.create({ email: 'job@example.com', availableAt: new Date(),
+  await AuthEmailRequest.create({ email: 'job@example.com', availableAt: new Date(),
     expiresAt: new Date(Date.now() + 86_400_000) });
   let entered;
   let release;
   let signal;
   const started = new Promise(resolve => { entered = resolve; });
-  const worker = createVerificationWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
+  const worker = createAuthEmailWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
     signal = input.signal;
     entered();
     await new Promise(resolve => { release = resolve; });
@@ -509,7 +512,7 @@ test('worker shutdown aborts a stuck delivery at its deadline and retains the jo
   assert.equal(signal.aborted, true);
   release();
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(await VerificationRequest.countDocuments(), 1);
+  assert.equal(await AuthEmailRequest.countDocuments(), 1);
   assert.equal(await worker.processNext(), false);
 });
 
@@ -836,13 +839,13 @@ test('concurrent refresh at the boundary cannot grow history beyond the limit', 
 });
 
 test('worker stop drains a directly invoked processNext and prevents late job deletion', async () => {
-  await VerificationRequest.create({ email: 'job@example.com', availableAt: new Date(),
+  await AuthEmailRequest.create({ email: 'job@example.com', availableAt: new Date(),
     expiresAt: new Date(Date.now() + 86_400_000) });
   let entered;
   let release;
   let signal;
   const started = new Promise(resolve => { entered = resolve; });
-  const worker = createVerificationWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
+  const worker = createAuthEmailWorker({ shutdownTimeoutMs: 20, deliver: async (input) => {
     signal = input.signal;
     entered();
     await new Promise(resolve => { release = resolve; });
@@ -853,7 +856,7 @@ test('worker stop drains a directly invoked processNext and prevents late job de
   assert.equal(signal.aborted, true);
   release();
   assert.equal(await work, false);
-  assert.equal(await VerificationRequest.countDocuments(), 1);
+  assert.equal(await AuthEmailRequest.countDocuments(), 1);
 });
 
 test('cancellation during user lookup prevents subsequent verification writes and SMTP', async (t) => {
@@ -869,4 +872,231 @@ test('cancellation during user lookup prevents subsequent verification writes an
   await assert.rejects(service.deliverVerificationRequest({
     email: 'student@example.com', signal: controller.signal,
   }), { name: 'AbortError' });
+});
+
+test('forgot-password gives the same accepted response and durable queue entry for every email', async () => {
+  await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+  });
+
+  const responses = await Promise.all([
+    request(app).post('/api/v1/auth/forgot-password').send({ email: 'EXISTING@example.com' }),
+    request(app).post('/api/v1/auth/forgot-password').send({ email: 'missing@example.com' }),
+  ]);
+
+  assert.deepEqual(responses.map(response => response.status), [202, 202]);
+  assert.deepEqual(responses[0].body, responses[1].body);
+  assert.equal(deliveredEmails.length, 0);
+  const jobs = await AuthEmailRequest.find({}).sort({ email: 1 }).lean();
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(jobs.map(job => job.purpose), ['password_reset', 'password_reset']);
+  assert.deepEqual(jobs.map(job => job.email), ['existing@example.com', 'missing@example.com']);
+  assert.equal(JSON.stringify(jobs).includes('old-password-value'), false);
+});
+
+test('password-reset worker sends only for an active account and stores a 30-minute hash', async () => {
+  const startedAt = Date.now();
+  const user = await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+  });
+  await request(app).post('/api/v1/auth/forgot-password')
+    .send({ email: user.email }).expect(202);
+  await request(app).post('/api/v1/auth/forgot-password')
+    .send({ email: 'missing@example.com' }).expect(202);
+
+  assert.equal(await app.locals.authEmailWorker.processNext(), true);
+  assert.equal(await app.locals.authEmailWorker.processNext(), true);
+  assert.equal(deliveredEmails.length, 1);
+  assert.equal(deliveredEmails[0].purpose, 'password_reset');
+
+  const stored = (await User.findById(user.id).select('+passwordReset').lean()).passwordReset;
+  assert.equal(stored.tokenHash, hashOneTimeToken(deliveredEmails[0].token));
+  assert.notEqual(stored.tokenHash, deliveredEmails[0].token);
+  assert.equal((await User.findById(user.id).lean()).passwordReset, undefined);
+  assert.equal(stored.expiresAt.getTime() >= startedAt + 1_799_000, true);
+  assert.equal(stored.expiresAt.getTime() <= Date.now() + 1_801_000, true);
+  assert.equal(await AuthEmailRequest.countDocuments(), 0);
+});
+
+test('reset-password changes the hash once and invalidates every existing session', async () => {
+  await createVerifiedStudent();
+  deliveredEmails.length = 0;
+  const credentials = { email: validRegistration.email, password: validRegistration.password };
+  const first = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+  const second = await request(app).post('/api/v1/auth/login').send(credentials).expect(200);
+
+  await request(app).post('/api/v1/auth/forgot-password')
+    .send({ email: credentials.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const resetToken = deliveredEmails[0].token;
+  const response = await request(app).post('/api/v1/auth/reset-password')
+    .set('Cookie', getRefreshCookie(first))
+    .send({ token: resetToken, password: 'new-correct-horse-battery' })
+    .expect(200);
+
+  assert.deepEqual(response.body.data, { passwordReset: true });
+  assert.match(getRefreshCookie(response), /Expires=Thu, 01 Jan 1970/i);
+  const user = await User.findOne({ email: credentials.email })
+    .select('+passwordHash +passwordVersion +tokenVersion');
+  assert.equal(user.passwordVersion, 1);
+  assert.equal(user.tokenVersion, 1);
+  assert.equal(await bcrypt.compare('new-correct-horse-battery', user.passwordHash), true);
+  assert.equal((await RefreshSession.countDocuments({ revokedReason: 'password_reset' })), 2);
+
+  await request(protectedApp).get('/private')
+    .auth(first.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(protectedApp).get('/private')
+    .auth(second.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(first)).expect(401);
+  await request(app).post('/api/v1/auth/reset-password')
+    .send({ token: resetToken, password: 'another-valid-password' }).expect(400);
+  await request(app).post('/api/v1/auth/login').send(credentials).expect(401);
+  await request(app).post('/api/v1/auth/login').send({
+    email: credentials.email,
+    password: 'new-correct-horse-battery',
+  }).expect(200);
+});
+
+test('expired, unknown, and malformed reset tokens cannot change the password', async () => {
+  const passwordHash = await bcrypt.hash('old-password-value', 10);
+  const user = await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash,
+  });
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const token = deliveredEmails[0].token;
+  await User.updateOne(
+    { _id: user.id },
+    { $set: { 'passwordReset.expiresAt': new Date(Date.now() - 1) } },
+  );
+
+  for (const candidate of [token, 'A'.repeat(43)]) {
+    const response = await request(app).post('/api/v1/auth/reset-password')
+      .send({ token: candidate, password: 'new-valid-password' }).expect(400);
+    assert.equal(response.body.error.code, 'INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN');
+  }
+  await request(app).post('/api/v1/auth/reset-password')
+    .send({ token: 'not-a-token', password: 'new-valid-password' }).expect(400);
+  const unchanged = await User.findById(user.id).select('+passwordHash +passwordVersion');
+  assert.equal(unchanged.passwordHash, passwordHash);
+  assert.equal(unchanged.passwordVersion, 0);
+});
+
+test('simultaneous password reset attempts can consume a token only once', async () => {
+  const user = await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+  });
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const token = deliveredEmails[0].token;
+
+  const results = await Promise.all([
+    request(app).post('/api/v1/auth/reset-password')
+      .send({ token, password: 'first-valid-password' }),
+    request(app).post('/api/v1/auth/reset-password')
+      .send({ token, password: 'second-valid-password' }),
+  ]);
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 400]);
+  const changed = await User.findById(user.id).select('+passwordVersion +tokenVersion');
+  assert.equal(changed.passwordVersion, 1);
+  assert.equal(changed.tokenVersion, 1);
+});
+
+test('a newer password-reset email replaces the previous token', async () => {
+  const user = await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+  });
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const firstToken = deliveredEmails[0].token;
+  await new Promise(resolve => setTimeout(resolve, 5));
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const secondToken = deliveredEmails[1].token;
+
+  assert.notEqual(secondToken, firstToken);
+  await request(app).post('/api/v1/auth/reset-password')
+    .send({ token: firstToken, password: 'new-valid-password' }).expect(400);
+  await request(app).post('/api/v1/auth/reset-password')
+    .send({ token: secondToken, password: 'new-valid-password' }).expect(200);
+});
+
+test('suspended accounts receive no reset email and cannot consume an existing token', async () => {
+  const user = await User.create({
+    name: 'Existing Student',
+    email: 'existing@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+  });
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  const token = deliveredEmails[0].token;
+  deliveredEmails.length = 0;
+  await User.updateOne({ _id: user.id }, { $set: { status: 'suspended' } });
+  await request(app).post('/api/v1/auth/forgot-password').send({ email: user.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  assert.equal(deliveredEmails.length, 0);
+  const response = await request(app).post('/api/v1/auth/reset-password')
+    .send({ token, password: 'new-valid-password' }).expect(400);
+  assert.equal(response.body.error.code, 'INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN');
+});
+
+test('password reset supports users created before passwordVersion was introduced', async () => {
+  const inserted = await User.collection.insertOne({
+    name: 'Legacy Student',
+    email: 'legacy@example.com',
+    passwordHash: await bcrypt.hash('old-password-value', 10),
+    roles: ['student'],
+    status: 'active',
+    emailVerifiedAt: new Date(),
+    tokenVersion: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+  await request(app).post('/api/v1/auth/forgot-password')
+    .send({ email: 'legacy@example.com' }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  await request(app).post('/api/v1/auth/reset-password').send({
+    token: deliveredEmails[0].token,
+    password: 'new-valid-password',
+  }).expect(200);
+
+  const user = await User.findById(inserted.insertedId).select('+passwordVersion +tokenVersion');
+  assert.equal(user.passwordVersion, 1);
+  assert.equal(user.tokenVersion, 1);
+});
+
+test('version changes keep reset authoritative when session cleanup fails', async (t) => {
+  await createVerifiedStudent();
+  deliveredEmails.length = 0;
+  const login = await request(app).post('/api/v1/auth/login').send({
+    email: validRegistration.email,
+    password: validRegistration.password,
+  }).expect(200);
+  await request(app).post('/api/v1/auth/forgot-password')
+    .send({ email: validRegistration.email }).expect(202);
+  await app.locals.authEmailWorker.processNext();
+  t.mock.method(RefreshSession, 'updateMany', async () => {
+    throw new Error('Session cleanup unavailable');
+  });
+
+  await request(app).post('/api/v1/auth/reset-password').send({
+    token: deliveredEmails[0].token,
+    password: 'new-valid-password',
+  }).expect(200);
+  assert.equal((await RefreshSession.findOne({})).revokedAt, null);
+  await request(protectedApp).get('/private')
+    .auth(login.body.data.accessToken, { type: 'bearer' }).expect(401);
+  await request(app).post('/api/v1/auth/refresh')
+    .set('Cookie', getRefreshCookie(login)).expect(401);
 });

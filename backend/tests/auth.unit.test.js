@@ -6,7 +6,11 @@ import request from 'supertest';
 
 import { createApp } from '../src/app.js';
 import { createAuthRateLimiter } from '../src/middlewares/rateLimiter.js';
-import { loginSchema, registerSchema } from '../src/modules/auth/auth.schemas.js';
+import {
+  loginSchema,
+  registerSchema,
+  resetPasswordSchema,
+} from '../src/modules/auth/auth.schemas.js';
 import {
   createEmailService,
   createSmtpTransportOptions,
@@ -64,6 +68,20 @@ test('login validation enforces the bcrypt UTF-8 byte limit', () => {
   assert.match(result.error.issues[0].message, /72 UTF-8 bytes/);
 });
 
+test('password-reset validation applies the same password policy and strict body shape', () => {
+  const token = 'A'.repeat(43);
+  assert.equal(resetPasswordSchema.safeParse({ token, password: 'valid-password' }).success, true);
+  assert.equal(resetPasswordSchema.safeParse({
+    token,
+    password: '😀'.repeat(19),
+  }).success, false);
+  assert.equal(resetPasswordSchema.safeParse({
+    token,
+    password: 'valid-password',
+    roles: ['admin'],
+  }).success, false);
+});
+
 test('email service creates a verification link without putting the token in headers', async () => {
   const messages = [];
   const emailService = createEmailService({
@@ -74,6 +92,7 @@ test('email service creates a verification link without putting the token in hea
     },
     fromAddress: 'no-reply@example.test',
     verificationUrl: 'https://app.example.test/verify-email',
+    passwordResetUrl: 'https://app.example.test/reset-password',
   });
   const token = generateOneTimeToken();
 
@@ -85,6 +104,32 @@ test('email service creates a verification link without putting the token in hea
 
   assert.equal(messages.length, 1);
   assert.equal(messages[0].to, 'student@example.test');
+  assert.equal(messages[0].subject.includes(token), false);
+  assert.equal(messages[0].html.includes('&lt;Student &quot;Example&quot;&gt;'), true);
+  assert.equal(messages[0].html.includes(encodeURIComponent(token)), true);
+});
+
+test('email service creates a reset link without putting the token in headers', async () => {
+  const messages = [];
+  const emailService = createEmailService({
+    transport: {
+      async sendMail(message) {
+        messages.push(message);
+      },
+    },
+    fromAddress: 'no-reply@example.test',
+    verificationUrl: 'https://app.example.test/verify-email',
+    passwordResetUrl: 'https://app.example.test/reset-password',
+  });
+  const token = generateOneTimeToken();
+
+  await emailService.sendPasswordReset({
+    recipientEmail: 'student@example.test',
+    recipientName: '<Student "Example">',
+    token,
+  });
+
+  assert.equal(messages.length, 1);
   assert.equal(messages[0].subject.includes(token), false);
   assert.equal(messages[0].html.includes('&lt;Student &quot;Example&quot;&gt;'), true);
   assert.equal(messages[0].html.includes(encodeURIComponent(token)), true);
@@ -145,5 +190,15 @@ test('auth routes request isolated shared-store instances by limiter namespace',
   });
 
   assert.deepEqual(namespaces,
-    ['register', 'verify-email', 'resend-verification', 'login', 'refresh']);
+    [
+      'register',
+      'verify-email',
+      'resend-verification',
+      'login',
+      'refresh',
+      'forgot-password',
+      'reset-password',
+      'logout',
+      'logout-all',
+    ]);
 });

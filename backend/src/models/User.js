@@ -44,10 +44,31 @@ const userSchema = new mongoose.Schema(
       required: true,
       select: false,
     },
+    passwordReset: {
+      type: new mongoose.Schema({
+        tokenHash: String,
+        expiresAt: Date,
+        issuanceId: String,
+        issuanceUntil: Date,
+        lastIssuedAt: Date,
+      }, { _id: false }),
+      select: false,
+    },
+    passwordVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: true,
+      select: false,
+    },
   },
   { timestamps: true },
 );
 
 userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ 'passwordReset.tokenHash': 1 }, {
+  unique: true,
+  partialFilterExpression: { 'passwordReset.tokenHash': { $type: 'string' } },
+});
 
 export const User = mongoose.model('User', userSchema);

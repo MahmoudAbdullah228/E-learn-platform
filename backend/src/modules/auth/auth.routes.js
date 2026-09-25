@@ -7,14 +7,21 @@ import { requireTrustedOrigin } from '../../middlewares/trustedOrigin.js';
 import { createAuthController } from './auth.controller.js';
 import {
   registerSchema,
+  forgotPasswordSchema,
   loginSchema,
+  resetPasswordSchema,
   resendVerificationSchema,
   verifyEmailSchema,
 } from './auth.schemas.js';
 
-export function createAuthRouter({ authService, sessionService, rateLimitStoreFactory }) {
+export function createAuthRouter({
+  authService,
+  passwordResetService,
+  sessionService,
+  rateLimitStoreFactory,
+}) {
   const router = Router();
-  const controller = createAuthController({ authService, sessionService });
+  const controller = createAuthController({ authService, passwordResetService, sessionService });
   const rateLimiters = createAuthRateLimiters({ storeFactory: rateLimitStoreFactory });
 
   router.post(
@@ -26,8 +33,20 @@ export function createAuthRouter({ authService, sessionService, rateLimitStoreFa
   router.post('/login', requireTrustedOrigin, rateLimiters.login,
     validateBody(loginSchema), controller.login);
   router.post('/refresh', requireTrustedOrigin, rateLimiters.refresh, controller.refresh);
-  router.post('/logout', requireTrustedOrigin, controller.logout);
-  router.post('/logout-all', authenticate, controller.logoutAll);
+  router.post('/logout', requireTrustedOrigin, rateLimiters.logout, controller.logout);
+  router.post('/logout-all', rateLimiters.logoutAll, authenticate, controller.logoutAll);
+  router.post(
+    '/forgot-password',
+    rateLimiters.forgotPassword,
+    validateBody(forgotPasswordSchema),
+    controller.forgotPassword,
+  );
+  router.post(
+    '/reset-password',
+    rateLimiters.resetPassword,
+    validateBody(resetPasswordSchema),
+    controller.resetPassword,
+  );
   router.post(
     '/verify-email',
     rateLimiters.verifyEmail,
