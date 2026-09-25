@@ -1,6 +1,6 @@
 # E-Learning Marketplace API
 
-Stories 1.1 through 1.4 provide the production-oriented foundation, registration, email verification, secure session management, and password reset. Courses and payments remain outside the current scope.
+Stories 1.1 through 1.5 provide the production-oriented foundation, registration, email verification, secure session management, password reset, and basic user profiles. Courses and payments remain outside the current scope.
 
 ## Requirements
 
@@ -70,6 +70,15 @@ POST /api/v1/auth/reset-password
 Reset-token hashes and expiry live in the hidden `User.passwordReset` fields. Consumption checks the current hash and expiry, clears the token, changes the password, and increments the session version in one atomic write. Issuance holds a bounded per-user lease; consumption during that lease returns `409 PASSWORD_RESET_IN_PROGRESS`. Failed delivery releases the lease and preserves the previous link. Expired or superseded issuers cannot activate a late SMTP result.
 
 Local upgrade note: reset links from the earlier Story 1.4 draft stored in `OneTimeToken` are intentionally no longer accepted; request a new reset email. Existing accounts and verification links are unaffected. Expired embedded reset hashes are rejected explicitly and overwritten on the next issuance; no TTL index is placed on users.
+
+Story 1.5 adds authenticated basic profiles:
+
+```text
+GET   /api/v1/users/me
+PATCH /api/v1/users/me
+```
+
+Both endpoints require a live bearer session. The GET endpoint returns only `id`, `name`, `email`, `roles`, and `emailVerifiedAt`. PATCH accepts exactly `{ "name": string }`; email, roles, status, passwords, and other fields are rejected. Names are trimmed, limited to 2–100 characters, and cannot contain control or Unicode formatting characters.
 
 Forgot-password always returns the same `202` response and durably queues the request before any account lookup, preventing account enumeration. The worker sends mail only for active accounts. Reset tokens expire after 30 minutes, are stored only as hashes, and can change the password once. A successful reset atomically advances both password and session versions, immediately invalidating every existing access and refresh token even if best-effort session cleanup fails.
 

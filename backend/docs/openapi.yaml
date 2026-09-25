@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 0.4.0
+  version: 0.5.0
   description: |
-    Stories 1.1 through 1.4: foundation, registration/email verification,
-    session management, and secure password reset.
+    Stories 1.1 through 1.5: foundation, registration/email verification,
+    session management, secure password reset, and basic user profiles.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -23,6 +23,8 @@ tags:
     description: Process health
   - name: Auth
     description: Registration, email verification, session management, and password reset
+  - name: Users
+    description: Authenticated user profile
 paths:
   /health:
     get:
@@ -271,6 +273,56 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '429':
           $ref: '#/components/responses/RateLimitError'
+  /users/me:
+    get:
+      operationId: getCurrentUserProfile
+      summary: Return the authenticated user's public profile
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current public profile
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal profile data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    patch:
+      operationId: updateCurrentUserProfile
+      summary: Update the authenticated user's display name
+      description: Only the name field is accepted. Email, roles, status, and authentication fields cannot be changed here.
+      tags: [Users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal profile data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
 components:
   securitySchemes:
     bearerAuth:
@@ -479,6 +531,32 @@ components:
             - type: string
               format: date-time
             - type: 'null'
+    UpdateProfileRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      example:
+        name: Updated Student Name
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+          description: Trimmed display name without control or Unicode formatting characters.
+    ProfileResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [user]
+          additionalProperties: false
+          properties:
+            user:
+              $ref: '#/components/schemas/PublicUser'
+        message:
+          type: string
     RegistrationResponse:
       type: object
       example:

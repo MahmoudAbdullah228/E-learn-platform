@@ -29,6 +29,13 @@ for (const path of [
 ]) {
   assert.ok(contract.paths[path]?.post, `POST ${path} is missing from the OpenAPI contract`);
 }
+assert.ok(contract.paths['/users/me']?.get, 'GET /users/me is missing from the OpenAPI contract');
+assert.ok(contract.paths['/users/me']?.patch,
+  'PATCH /users/me is missing from the OpenAPI contract');
+for (const method of ['get', 'patch']) {
+  assert.ok(contract.paths['/users/me'][method].security?.some(value => value.bearerAuth),
+    `${method.toUpperCase()} /users/me must require bearer authentication`);
+}
 assert.ok(contract.components.securitySchemes.bearerAuth, 'Bearer security scheme is missing');
 assert.ok(contract.components.securitySchemes.refreshCookie,
   'Refresh-cookie security scheme is missing');

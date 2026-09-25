@@ -22,7 +22,7 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 10);
+  assert.equal(Object.keys(json.body.paths).length, 11);
   for (const path of [
     '/auth/login',
     '/auth/refresh',
@@ -33,6 +33,8 @@ test('downloadable contracts match the canonical document and expose only implem
   ]) {
     assert.ok(json.body.paths[path]?.post, `${path} is missing`);
   }
+  assert.ok(json.body.paths['/users/me']?.get, 'GET /users/me is missing');
+  assert.ok(json.body.paths['/users/me']?.patch, 'PATCH /users/me is missing');
   const yaml = await request(app).get('/api/v1/openapi.yaml').expect(200);
   assert.match(yaml.headers['content-disposition'], /attachment/);
   const downloaded = yaml.text ?? yaml.body.toString('utf8');

@@ -1,4 +1,4 @@
-# Frontend API handoff — Stories 1.1 through 1.4
+# Frontend API handoff — Stories 1.1 through 1.5
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 Import the attached `openapi.yaml` or download `/api/v1/openapi.json` from the running API.
@@ -17,6 +17,8 @@ set your client's backend origin explicitly. JSON request bodies require `Conten
 | POST | `/auth/logout-all` | Bearer access token | 200, `{ data: {}, message }` |
 | POST | `/auth/forgot-password` | `{ email }` | 202, `{ data: {}, message }` |
 | POST | `/auth/reset-password` | `{ token, password }` | 200, `{ data: { passwordReset: true }, message }` |
+| GET | `/users/me` | Bearer access token | 200, `{ data: { user } }` |
+| PATCH | `/users/me` | Bearer token + `{ name }` | 200, `{ data: { user }, message }` |
 
 Registration creates students only. Do not send `roles`, `status`, or other extra fields.
 Names are trimmed (2–100 characters); emails are normalized to lowercase.
@@ -75,6 +77,10 @@ The refresh token is an HttpOnly cookie and is intentionally unavailable to fron
 4. On success, clear all in-memory authentication state and route to login; every previous device session is invalid.
 
 Reset links expire after 30 minutes and work once. A newer accepted reset email replaces the older link. The forgot response is intentionally identical for unknown, suspended, and active accounts.
+
+## Basic profile flow
+
+Use `GET /users/me` after login or a successful refresh to load the current public profile. Use `PATCH /users/me` to change the display name. Send only `{ name }`; the API rejects email, role, status, password, and unknown fields. Replace the locally cached user object with the returned value after an update. A `401` means the access token, account, or device session is no longer valid; follow the normal refresh flow once.
 
 A session allows up to 4096 refresh rotations. Once exhausted, refresh returns `401 INVALID_REFRESH_TOKEN` and ends that device session; show login again. Historical token hashes are retained rather than evicted, so replay detection remains intact.
 Use `credentials: 'include'` for login, refresh, and logout. Registration and email-verification endpoints do not require an Authorization header.
