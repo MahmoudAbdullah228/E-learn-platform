@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import mongoose from 'mongoose';
 
 import { env } from '../../config/env.js';
 import { logger, serializeError } from '../../config/logger.js';
@@ -11,6 +12,10 @@ import { issueReplacementOneTimeToken } from '../../services/oneTimeTokenIssuanc
 
 const PURPOSE = 'email_verification';
 const TTL_MS = 24 * 60 * 60 * 1000;
+const TRANSACTION_OPTIONS = {
+  readConcern: { level: 'snapshot' },
+  writeConcern: { w: 'majority' },
+};
 function invalidToken() {
   return new ApiError(400, 'INVALID_OR_EXPIRED_VERIFICATION_TOKEN',
     'Verification token is invalid or expired');
@@ -55,30 +60,26 @@ export function createAuthService({ emailSender, clock = () => new Date() }) {
     async verifyEmail({ token }) {
       const now = clock();
       const tokenHash = hashOneTimeToken(token);
-      const oneTimeToken = await OneTimeToken.findOne({
-        tokenHash, purpose: PURPOSE, consumedAt: null, expiresAt: { $gt: now },
-      });
-      if (!oneTimeToken) throw invalidToken();
 
-      // This single-document transition is authoritative: only one request can verify.
-      // A failed user write leaves the token untouched and retryable.
-      const user = await User.findOneAndUpdate(
-        { _id: oneTimeToken.userId, status: 'active', emailVerifiedAt: null },
-        { $set: { emailVerifiedAt: now } },
-        { returnDocument: 'after', runValidators: true },
-      );
-      if (!user) throw invalidToken();
-
-      try {
-        await OneTimeToken.updateOne(
-          { _id: oneTimeToken._id, tokenHash, consumedAt: null },
+      return mongoose.connection.transaction(async (session) => {
+        // Consuming the exact current hash is the authorization decision. This CAS write
+        // conflicts safely with replacement-token activation, so a stale token cannot win.
+        const oneTimeToken = await OneTimeToken.findOneAndUpdate(
+          { tokenHash, purpose: PURPOSE, consumedAt: null, expiresAt: { $gt: now } },
           { $set: { consumedAt: now } },
+          { returnDocument: 'after', session },
         );
-      } catch (error) {
-        // Verification has committed. User state blocks replay even if cleanup fails.
-        logger.error(serializeError(error), 'Verified account token cleanup failed');
-      }
-      return { verified: true };
+        if (!oneTimeToken) throw invalidToken();
+
+        const user = await User.findOneAndUpdate(
+          { _id: oneTimeToken.userId, status: 'active', emailVerifiedAt: null },
+          { $set: { emailVerifiedAt: now } },
+          { returnDocument: 'after', runValidators: true, session },
+        );
+        if (!user) throw invalidToken();
+
+        return { verified: true };
+      }, TRANSACTION_OPTIONS);
     },
 
     async resendEmailVerification({ email }) {

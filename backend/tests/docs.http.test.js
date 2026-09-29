@@ -22,7 +22,7 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 11);
+  assert.equal(Object.keys(json.body.paths).length, 25);
   for (const path of [
     '/auth/login',
     '/auth/refresh',
@@ -35,6 +35,40 @@ test('downloadable contracts match the canonical document and expose only implem
   }
   assert.ok(json.body.paths['/users/me']?.get, 'GET /users/me is missing');
   assert.ok(json.body.paths['/users/me']?.patch, 'PATCH /users/me is missing');
+  assert.ok(json.body.paths['/instructor-applications']?.post,
+    'POST /instructor-applications is missing');
+  assert.ok(json.body.paths['/instructor-applications/me']?.get,
+    'GET /instructor-applications/me is missing');
+  assert.ok(json.body.paths['/admin/instructor-applications']?.get,
+    'GET /admin/instructor-applications is missing');
+  assert.ok(json.body.paths['/admin/instructor-applications/{applicationId}']?.patch,
+    'PATCH /admin/instructor-applications/{applicationId} is missing');
+  assert.ok(json.body.paths['/instructor/courses']?.get,
+    'GET /instructor/courses is missing');
+  assert.ok(json.body.paths['/instructor/courses']?.post,
+    'POST /instructor/courses is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}']?.get,
+    'GET /instructor/courses/{courseId} is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}']?.patch,
+    'PATCH /instructor/courses/{courseId} is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/sections']?.get,
+    'GET curriculum is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/sections']?.post,
+    'POST section is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/sections/order']?.put,
+    'PUT section order is missing');
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/sections/{sectionId}']?.delete,
+    'DELETE section is missing');
+  assert.ok(json.body.paths['/instructor/sections/{sectionId}/lessons']?.post,
+    'POST lesson is missing');
+  assert.ok(json.body.paths['/instructor/sections/{sectionId}/lessons/order']?.put,
+    'PUT lesson order is missing');
+  assert.ok(json.body.paths['/instructor/lessons/{lessonId}']?.patch,
+    'PATCH lesson is missing');
+  assert.ok(json.body.paths['/instructor/lessons/{lessonId}/video-upload']?.post,
+    'POST lesson video upload is missing');
+  assert.ok(json.body.paths['/webhooks/video']?.post,
+    'POST video webhook is missing');
   const yaml = await request(app).get('/api/v1/openapi.yaml').expect(200);
   assert.match(yaml.headers['content-disposition'], /attachment/);
   const downloaded = yaml.text ?? yaml.body.toString('utf8');
