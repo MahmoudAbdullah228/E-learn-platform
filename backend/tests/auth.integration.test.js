@@ -9,6 +9,7 @@ import supertest from 'supertest';
 
 import { createApp } from '../src/app.js';
 import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
+import { assertTransactionSupport } from '../src/config/transactions.js';
 import { OneTimeToken } from '../src/models/OneTimeToken.js';
 import { RefreshSession } from '../src/models/RefreshSession.js';
 import { User } from '../src/models/User.js';
@@ -17,7 +18,7 @@ import { createAuthService } from '../src/modules/auth/auth.service.js';
 import { createAuthEmailWorker } from '../src/services/authEmailWorker.service.js';
 import { authenticate, authorize } from '../src/middlewares/authenticate.js';
 import { errorHandler } from '../src/middlewares/errorHandler.js';
-import { hashOneTimeToken } from '../src/utils/oneTimeToken.js';
+import { generateOneTimeToken, hashOneTimeToken } from '../src/utils/oneTimeToken.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 import { createSessionService } from '../src/modules/auth/session.service.js';
 import { MAX_REFRESH_ROTATIONS } from '../src/config/sessionPolicy.js';
@@ -48,6 +49,7 @@ const validRegistration = {
 before(async () => {
   await connectDatabase({ maxRetries: 1 });
   assert.match(mongoose.connection.name, /_test$/);
+  await assertTransactionSupport();
   await Promise.all([User.init(), OneTimeToken.init(), AuthEmailRequest.init(),
     RefreshSession.init()]);
 });
@@ -347,15 +349,31 @@ test('concurrent verification succeeds only once', async () => {
   assert.deepEqual(responses.map(response => response.status).sort(), [200, 400]);
 });
 
-test('token cleanup failure cannot allow replay after successful verification', async (t) => {
+test('a token replaced immediately before atomic consumption cannot verify the account', async (t) => {
   await request(app).post('/api/v1/auth/register').send(validRegistration).expect(201);
-  const token = deliveredEmails[0].token;
-  const update = t.mock.method(OneTimeToken, 'updateOne', async () => {
-    throw new Error('Simulated cleanup outage');
+  const staleToken = deliveredEmails[0].token;
+  const replacementToken = generateOneTimeToken();
+  const originalFindOneAndUpdate = OneTimeToken.findOneAndUpdate;
+  let replacementActivated = false;
+
+  const consume = t.mock.method(OneTimeToken, 'findOneAndUpdate', async function consumeToken(
+    filter,
+    update,
+    options,
+  ) {
+    if (!replacementActivated) {
+      replacementActivated = true;
+      await OneTimeToken.updateOne(
+        { purpose: 'email_verification' },
+        { $set: { tokenHash: hashOneTimeToken(replacementToken) } },
+      );
+    }
+    return originalFindOneAndUpdate.call(this, filter, update, options);
   });
-  await request(app).post('/api/v1/auth/verify-email').send({ token }).expect(200);
-  update.mock.restore();
-  await request(app).post('/api/v1/auth/verify-email').send({ token }).expect(400);
+
+  await request(app).post('/api/v1/auth/verify-email').send({ token: staleToken }).expect(400);
+  consume.mock.restore();
+  await request(app).post('/api/v1/auth/verify-email').send({ token: replacementToken }).expect(200);
 });
 
 test('resend enqueues every account state without waiting for delivery or reading users', async (t) => {

@@ -33,6 +33,22 @@ const userSchema = new mongoose.Schema(
       default: 'active',
       required: true,
     },
+    instructorStatus: {
+      type: String,
+      enum: ['none', 'pending', 'approved', 'rejected'],
+      default: 'none',
+      required: true,
+    },
+    instructorProfile: {
+      type: new mongoose.Schema(
+        {
+          bio: { type: String, required: true, trim: true, minlength: 50, maxlength: 2000 },
+          expertise: { type: String, required: true, trim: true, minlength: 2, maxlength: 200 },
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     emailVerifiedAt: {
       type: Date,
       default: null,

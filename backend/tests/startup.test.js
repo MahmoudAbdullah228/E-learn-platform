@@ -2,6 +2,24 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { startHttpServer } from '../src/services/startup.service.js';
+import { assertTransactionSupport } from '../src/config/transactions.js';
+
+test('standalone databases fail the transaction prerequisite with a safe code', async () => {
+  const connection = { db: {
+    admin: () => ({ command: async () => ({ isWritablePrimary: true }) }),
+  } };
+  await assert.rejects(assertTransactionSupport(connection), { code: 'MONGODB_REPLICA_SET_REQUIRED' });
+});
+
+test('database preparation failure prevents HTTP startup', async () => {
+  await assert.rejects(startHttpServer({
+    connectDatabase: async () => {},
+    prepareDatabase: async () => { throw new Error('Preparation failed'); },
+    disconnectDatabase: async () => {},
+    isShuttingDown: () => false,
+    listen: () => assert.fail('Must not listen when preparation failed'),
+  }), /Preparation failed/);
+});
 
 test('startup does not bind a listener when shutdown begins during database connection', async () => {
   let resolveConnection;

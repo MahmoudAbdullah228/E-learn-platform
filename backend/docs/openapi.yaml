@@ -1,10 +1,12 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 0.5.0
+  version: 0.9.0
   description: |
-    Stories 1.1 through 1.5: foundation, registration/email verification,
-    session management, secure password reset, and basic user profiles.
+    Stories 1.1 through 2.4: foundation, registration/email verification,
+    session management, secure password reset, basic user profiles, and
+    instructor applications with administrative review, draft courses, ordered curricula,
+    and secure Mux direct-video uploads with signed webhook processing.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -25,6 +27,14 @@ tags:
     description: Registration, email verification, session management, and password reset
   - name: Users
     description: Authenticated user profile
+  - name: Instructor applications
+    description: Student applications and administrative review
+  - name: Draft courses
+    description: Instructor-owned draft course management
+  - name: Curriculum
+    description: Ordered sections and lessons belonging to instructor-owned draft courses
+  - name: Video
+    description: Mux Direct Upload creation and signed asynchronous lifecycle events
 paths:
   /health:
     get:
@@ -323,7 +333,649 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+  /instructor-applications:
+    post:
+      operationId: createInstructorApplication
+      summary: Submit an instructor application
+      description: Only authenticated students whose previous application is absent or rejected may apply. At most one pending application can exist per user.
+      tags: [Instructor applications]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstructorApplicationRequest'
+      responses:
+        '201':
+          description: Instructor application submitted
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal application data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorApplicationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor-applications/me:
+    get:
+      operationId: getMyInstructorApplication
+      summary: Return the authenticated user's latest instructor application
+      tags: [Instructor applications]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Latest application, or null when the user has never applied
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal application data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyInstructorApplicationResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+  /admin/instructor-applications:
+    get:
+      operationId: listInstructorApplications
+      summary: List instructor applications for administrative review
+      tags: [Instructor applications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/InstructorApplicationStatus'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated applications ordered newest first
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal application data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorApplicationListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+  /admin/instructor-applications/{applicationId}:
+    patch:
+      operationId: reviewInstructorApplication
+      summary: Approve or reject one pending instructor application
+      description: Approval adds the instructor role without removing the student role. Rejection requires a reason. Reviewed applications cannot be changed.
+      tags: [Instructor applications]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: applicationId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{24}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewInstructorApplicationRequest'
+      responses:
+        '200':
+          description: Application reviewed and applicant state updated atomically
+          headers:
+            Cache-Control:
+              description: Prevents storage of personal application data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorApplicationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/courses:
+    get:
+      operationId: listInstructorDraftCourses
+      summary: List the authenticated instructor's draft courses
+      description: Results are ordered by most recently updated and never include another instructor's courses.
+      tags: [Draft courses]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            const: draft
+            default: draft
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000000
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Paginated owned draft courses
+          headers:
+            Cache-Control:
+              description: Prevents storage of instructor course data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    post:
+      operationId: createInstructorDraftCourse
+      summary: Create a draft course
+      description: The category must be active. The API allocates a globally unique slug; clients cannot set it.
+      tags: [Draft courses]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCourseRequest'
+      responses:
+        '201':
+          description: Draft course created
+          headers:
+            Cache-Control:
+              description: Prevents storage of instructor course data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/courses/{courseId}:
+    parameters:
+      - name: courseId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+    get:
+      operationId: getInstructorDraftCourse
+      summary: Return one owned draft course
+      description: A missing, non-draft, or differently owned course returns the same 404 response.
+      tags: [Draft courses]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Owned draft course
+          headers:
+            Cache-Control:
+              description: Prevents storage of instructor course data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    patch:
+      operationId: updateInstructorDraftCourse
+      summary: Partially update one owned draft course
+      description: At least one editable field is required. Slugs remain stable when titles change. Ownership, slug, status, and coverKey cannot be changed here.
+      tags: [Draft courses]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCourseRequest'
+      responses:
+        '200':
+          description: Draft course updated
+          headers:
+            Cache-Control:
+              description: Prevents storage of instructor course data
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CourseResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+  /instructor/courses/{courseId}/sections:
+    parameters:
+      - $ref: '#/components/parameters/CourseId'
+    get:
+      operationId: listDraftCourseCurriculum
+      summary: List ordered sections and their ordered lessons
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Owned draft course curriculum
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurriculumResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    post:
+      operationId: createDraftCourseSection
+      summary: Append a section to an owned draft course
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitleRequest'
+      responses:
+        '201':
+          description: Section appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/courses/{courseId}/sections/order:
+    parameters:
+      - $ref: '#/components/parameters/CourseId'
+    put:
+      operationId: reorderDraftCourseSections
+      summary: Atomically replace the section order
+      description: orderedIds must be the exact current section ID set.
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+      responses:
+        '200':
+          description: Sections reordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/courses/{courseId}/sections/{sectionId}:
+    parameters:
+      - $ref: '#/components/parameters/CourseId'
+      - $ref: '#/components/parameters/SectionId'
+    patch:
+      operationId: updateDraftCourseSection
+      summary: Update a section title
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TitleRequest'
+      responses:
+        '200':
+          description: Section updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SectionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      operationId: deleteDraftCourseSection
+      summary: Delete a section and all of its lessons atomically
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Section and child lessons deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+  /instructor/sections/{sectionId}/lessons:
+    parameters:
+      - $ref: '#/components/parameters/SectionId'
+    post:
+      operationId: createDraftCourseLesson
+      summary: Append a lesson to an owned draft-course section
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLessonRequest'
+      responses:
+        '201':
+          description: Lesson appended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/sections/{sectionId}/lessons/order:
+    parameters:
+      - $ref: '#/components/parameters/SectionId'
+    put:
+      operationId: reorderDraftCourseLessons
+      summary: Atomically replace the lesson order
+      description: orderedIds must be the exact current lesson ID set.
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRequest'
+      responses:
+        '200':
+          description: Lessons reordered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+  /instructor/lessons/{lessonId}:
+    parameters:
+      - $ref: '#/components/parameters/LessonId'
+    patch:
+      operationId: updateDraftCourseLesson
+      summary: Update lesson metadata
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLessonRequest'
+      responses:
+        '200':
+          description: Lesson updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LessonResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      operationId: deleteDraftCourseLesson
+      summary: Delete a lesson and compact sibling positions
+      tags: [Curriculum]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lesson deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+  /instructor/lessons/{lessonId}/video-upload:
+    parameters:
+      - $ref: '#/components/parameters/LessonId'
+    post:
+      operationId: createLessonVideoDirectUpload
+      summary: Create a one-time Mux Direct Upload URL for an owned draft lesson
+      description: The browser uploads video bytes directly to Mux. This API never receives the file. A lesson with a ready or in-progress video rejects another attempt.
+      tags: [Video]
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Direct Upload URL reserved and created
+          headers:
+            Cache-Control:
+              description: Prevents storage of the temporary signed upload URL
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoUploadResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
+  /webhooks/video:
+    post:
+      operationId: receiveMuxVideoWebhook
+      summary: Receive a signed Mux video lifecycle event
+      description: Public provider callback. The mux-signature header is verified against the untouched JSON body and a five-minute timestamp window. Duplicate delivery is safe.
+      tags: [Video]
+      parameters:
+        - name: mux-signature
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Mux webhook event; validated after signature verification.
+              additionalProperties: true
+      responses:
+        '200':
+          description: Authentic event acknowledged, whether handled or obsolete
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoWebhookResponse'
+        '400':
+          description: Missing, expired, future, or invalid Mux signature
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/PayloadTooLargeError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailableError'
 components:
+  parameters:
+    CourseId:
+      name: courseId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-fA-F0-9]{24}$'
+    SectionId:
+      name: sectionId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-fA-F0-9]{24}$'
+    LessonId:
+      name: lessonId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-fA-F0-9]{24}$'
   securitySchemes:
     bearerAuth:
       type: http
@@ -341,7 +993,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     ConflictError:
-      description: A unique resource such as the normalized email already exists
+      description: A unique resource already exists or its state no longer permits this transition
       content:
         application/json:
           schema:
@@ -386,6 +1038,24 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     ForbiddenError:
       description: Account state, role, or request origin does not permit this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFoundError:
+      description: Requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLargeError:
+      description: Webhook body exceeds the one-megabyte limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailableError:
+      description: Mux configuration or service is temporarily unavailable
       content:
         application/json:
           schema:
@@ -557,6 +1227,596 @@ components:
               $ref: '#/components/schemas/PublicUser'
         message:
           type: string
+    CreateInstructorApplicationRequest:
+      type: object
+      required: [bio, expertise]
+      additionalProperties: false
+      example:
+        bio: I have taught software engineering for several years and enjoy helping new developers.
+        expertise: Node.js, Express, MongoDB, and backend architecture
+      properties:
+        bio:
+          type: string
+          minLength: 50
+          maxLength: 2000
+        expertise:
+          type: string
+          minLength: 2
+          maxLength: 200
+    ReviewInstructorApplicationRequest:
+      oneOf:
+        - type: object
+          required: [status]
+          additionalProperties: false
+          properties:
+            status:
+              const: approved
+        - type: object
+          required: [status, rejectionReason]
+          additionalProperties: false
+          properties:
+            status:
+              const: rejected
+            rejectionReason:
+              type: string
+              minLength: 5
+              maxLength: 500
+    InstructorApplicationStatus:
+      type: string
+      enum: [pending, approved, rejected]
+    InstructorApplicationFields:
+      type: object
+      required:
+        - id
+        - userId
+        - bio
+        - expertise
+        - status
+        - reviewedBy
+        - rejectionReason
+        - reviewedAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        userId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        bio:
+          type: string
+        expertise:
+          type: string
+        status:
+          $ref: '#/components/schemas/InstructorApplicationStatus'
+        reviewedBy:
+          oneOf:
+            - type: string
+              pattern: '^[a-fA-F0-9]{24}$'
+            - type: 'null'
+        rejectionReason:
+          oneOf:
+            - type: string
+            - type: 'null'
+        reviewedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    InstructorApplication:
+      allOf:
+        - $ref: '#/components/schemas/InstructorApplicationFields'
+      unevaluatedProperties: false
+    AdminInstructorApplication:
+      allOf:
+        - $ref: '#/components/schemas/InstructorApplicationFields'
+        - type: object
+          required: [applicant]
+          properties:
+            applicant:
+              type: [object, 'null']
+              description: Null if the applicant account has been deleted; userId retains its original value.
+              required: [id, name, email]
+              additionalProperties: false
+              properties:
+                id:
+                  type: string
+                  pattern: '^[a-fA-F0-9]{24}$'
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+      unevaluatedProperties: false
+    InstructorApplicationResponse:
+      type: object
+      required: [data, message]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [application]
+          additionalProperties: false
+          properties:
+            application:
+              $ref: '#/components/schemas/InstructorApplication'
+        message:
+          type: string
+    MyInstructorApplicationResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [application]
+          additionalProperties: false
+          properties:
+            application:
+              oneOf:
+                - $ref: '#/components/schemas/InstructorApplication'
+                - type: 'null'
+    InstructorApplicationListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [applications, pagination]
+          additionalProperties: false
+          properties:
+            applications:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminInstructorApplication'
+            pagination:
+              type: object
+              required: [page, limit, total, totalPages]
+              additionalProperties: false
+              properties:
+                page:
+                  type: integer
+                  minimum: 1
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                total:
+                  type: integer
+                  minimum: 0
+                totalPages:
+                  type: integer
+                  minimum: 0
+    CourseInputFields:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 160
+        categoryId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        description:
+          type: string
+          minLength: 20
+          maxLength: 10000
+        requirements:
+          type: array
+          maxItems: 30
+          uniqueItems: true
+          description: Items are trimmed and uniqueness is case-insensitive.
+          items:
+            type: string
+            minLength: 2
+            maxLength: 300
+        learningOutcomes:
+          type: array
+          maxItems: 30
+          uniqueItems: true
+          description: Items are trimmed and uniqueness is case-insensitive.
+          items:
+            type: string
+            minLength: 2
+            maxLength: 300
+        priceMinor:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Price in the smallest EGP unit.
+        currency:
+          const: EGP
+    CreateCourseRequest:
+      allOf:
+        - $ref: '#/components/schemas/CourseInputFields'
+        - type: object
+          required: [title, categoryId, description, priceMinor]
+      unevaluatedProperties: false
+      example:
+        title: Production Backend Engineering
+        categoryId: 507f1f77bcf86cd799439011
+        description: Build reliable backend services using practical production architecture.
+        requirements: [JavaScript fundamentals]
+        learningOutcomes: [Design maintainable REST APIs]
+        priceMinor: 125000
+        currency: EGP
+    UpdateCourseRequest:
+      allOf:
+        - $ref: '#/components/schemas/CourseInputFields'
+      minProperties: 1
+      unevaluatedProperties: false
+    Course:
+      type: object
+      required:
+        - id
+        - instructorId
+        - categoryId
+        - category
+        - title
+        - slug
+        - description
+        - requirements
+        - learningOutcomes
+        - priceMinor
+        - currency
+        - status
+        - createdAt
+        - updatedAt
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        instructorId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        categoryId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        category:
+          oneOf:
+            - type: object
+              required: [id, name, slug, isActive]
+              additionalProperties: false
+              properties:
+                id:
+                  type: string
+                  pattern: '^[a-fA-F0-9]{24}$'
+                name:
+                  type: string
+                slug:
+                  type: string
+                isActive:
+                  type: boolean
+            - type: 'null'
+              description: The original category was deleted; categoryId is retained.
+        title:
+          type: string
+        slug:
+          type: string
+          readOnly: true
+        description:
+          type: string
+        requirements:
+          type: array
+          items:
+            type: string
+        learningOutcomes:
+          type: array
+          items:
+            type: string
+        priceMinor:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        currency:
+          const: EGP
+        status:
+          const: draft
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CourseResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [course]
+          additionalProperties: false
+          properties:
+            course:
+              $ref: '#/components/schemas/Course'
+        message:
+          type: string
+    CourseListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [courses, pagination]
+          additionalProperties: false
+          properties:
+            courses:
+              type: array
+              items:
+                $ref: '#/components/schemas/Course'
+            pagination:
+              type: object
+              required: [page, limit, total, totalPages]
+              additionalProperties: false
+              properties:
+                page:
+                  type: integer
+                  minimum: 1
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 100
+                total:
+                  type: integer
+                  minimum: 0
+                totalPages:
+                  type: integer
+                  minimum: 0
+    TitleRequest:
+      type: object
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 160
+    CreateLessonRequest:
+      type: object
+      required: [title]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 160
+        isPreview:
+          type: boolean
+          default: false
+    UpdateLessonRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 160
+        isPreview:
+          type: boolean
+    OrderRequest:
+      type: object
+      required: [orderedIds]
+      additionalProperties: false
+      properties:
+        orderedIds:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          description: Exact set of current child IDs in the desired order.
+          items:
+            type: string
+            pattern: '^[a-fA-F0-9]{24}$'
+    Lesson:
+      type: object
+      required: [id, sectionId, title, position, isPreview, videoStatus, durationSeconds, createdAt, updatedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        sectionId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        title:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+        isPreview:
+          type: boolean
+        videoStatus:
+          type: string
+          enum: [none, pending, processing, ready, failed]
+        durationSeconds:
+          type: number
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Section:
+      type: object
+      required: [id, courseId, title, position, createdAt, updatedAt]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        courseId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        title:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CurriculumSection:
+      type: object
+      required: [id, courseId, title, position, createdAt, updatedAt, lessons]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        courseId:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        title:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        lessons:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lesson'
+    SectionResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [section]
+          additionalProperties: false
+          properties:
+            section:
+              $ref: '#/components/schemas/Section'
+    LessonResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [lesson]
+          additionalProperties: false
+          properties:
+            lesson:
+              $ref: '#/components/schemas/Lesson'
+    SectionListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [sections]
+          additionalProperties: false
+          properties:
+            sections:
+              type: array
+              items:
+                $ref: '#/components/schemas/Section'
+    LessonListResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [lessons]
+          additionalProperties: false
+          properties:
+            lessons:
+              type: array
+              items:
+                $ref: '#/components/schemas/Lesson'
+    CurriculumResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [sections]
+          additionalProperties: false
+          properties:
+            sections:
+              type: array
+              items:
+                $ref: '#/components/schemas/CurriculumSection'
+    DeleteResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [deletedId]
+          additionalProperties: false
+          properties:
+            deletedId:
+              type: string
+              pattern: '^[a-fA-F0-9]{24}$'
+    VideoUploadResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [upload]
+          additionalProperties: false
+          properties:
+            upload:
+              type: object
+              required: [id, url, timeoutSeconds, videoStatus]
+              additionalProperties: false
+              properties:
+                id:
+                  type: string
+                url:
+                  type: string
+                  format: uri
+                  description: Temporary Mux Direct Upload URL. Do not persist or log it.
+                timeoutSeconds:
+                  type: integer
+                  minimum: 60
+                  maximum: 604800
+                videoStatus:
+                  const: pending
+    VideoWebhookResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [received, handled]
+          additionalProperties: false
+          properties:
+            received:
+              const: true
+            handled:
+              type: boolean
+              description: False for authentic unrelated, unknown, or obsolete events.
     RegistrationResponse:
       type: object
       example:
@@ -714,6 +1974,13 @@ components:
                 - EMAIL_NOT_VERIFIED
                 - LOGOUT_RATE_LIMITED
                 - LOGOUT_ALL_RATE_LIMITED
+                - APPLICATION_ALREADY_PENDING
+                - INSTRUCTOR_ALREADY_APPROVED
+                - APPLICATION_ALREADY_REVIEWED
+                - APPLICANT_STATE_CONFLICT
+                - INVALID_CATEGORY
+                - COURSE_NOT_FOUND
+                - COURSE_SLUG_CONFLICT
                 - INVALID_JSON
                 - PAYLOAD_TOO_LARGE
                 - ROUTE_NOT_FOUND

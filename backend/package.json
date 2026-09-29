@@ -7,6 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "mongo:local": "node scripts/start-local-mongo.js",
     "dev": "node --env-file-if-exists=.env --watch server.js",
     "start": "node --env-file-if-exists=.env server.js",
     "lint": "eslint .",
@@ -17,6 +18,7 @@
     "seed:categories": "node --env-file-if-exists=.env scripts/seed-categories.js"
   },
   "dependencies": {
+    "@mux/mux-node": "^15.3.0",
     "bcrypt": "^6.0.0",
     "compression": "^1.8.2",
     "cookie": "^2.0.1",

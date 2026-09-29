@@ -63,6 +63,14 @@ const environmentSchema = z
       .min(1000)
       .max(300_000)
       .default(30_000),
+    MUX_TOKEN_ID: optionalTrimmedString,
+    MUX_TOKEN_SECRET: optionalSecret,
+    MUX_WEBHOOK_SECRET: optionalSecret,
+    MUX_UPLOAD_CORS_ORIGIN: optionalTrimmedString,
+    MUX_UPLOAD_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(604_800).default(3600),
+    MUX_VIDEO_QUALITY: z.enum(['basic', 'plus', 'premium']).default('basic'),
+    MUX_TEST_MODE: z.enum(['true', 'false']).default('true')
+      .transform(value => value === 'true'),
     REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
@@ -136,6 +144,17 @@ const environmentSchema = z
       });
     }
 
+    const muxConfiguration = [
+      values.MUX_TOKEN_ID, values.MUX_TOKEN_SECRET, values.MUX_WEBHOOK_SECRET,
+    ];
+    if (muxConfiguration.some(Boolean) && !muxConfiguration.every(Boolean)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MUX_TOKEN_ID'],
+        message: 'MUX_TOKEN_ID, MUX_TOKEN_SECRET, and MUX_WEBHOOK_SECRET must be provided together',
+      });
+    }
+
     if (values.JWT_ACCESS_SECRET === values.REFRESH_TOKEN_PEPPER) {
       context.addIssue({
         code: 'custom',
@@ -145,6 +164,18 @@ const environmentSchema = z
     }
 
     if (values.NODE_ENV === 'production') {
+      if (!muxConfiguration.every(Boolean)) {
+        context.addIssue({
+          code: 'custom', path: ['MUX_TOKEN_ID'],
+          message: 'Mux credentials are required in production',
+        });
+      }
+      if (values.MUX_TEST_MODE) {
+        context.addIssue({
+          code: 'custom', path: ['MUX_TEST_MODE'],
+          message: 'MUX_TEST_MODE must be false in production',
+        });
+      }
       for (const [key, secret] of [
         ['JWT_ACCESS_SECRET', values.JWT_ACCESS_SECRET],
         ['REFRESH_TOKEN_PEPPER', values.REFRESH_TOKEN_PEPPER],
@@ -194,6 +225,25 @@ for (const origin of corsOrigins) {
   }
 }
 
+const muxUploadOrigin = parsed.MUX_UPLOAD_CORS_ORIGIN ?? corsOrigins[0];
+let parsedMuxOrigin;
+try {
+  parsedMuxOrigin = new URL(muxUploadOrigin);
+} catch {
+  throw new Error('Invalid environment variables:\nMUX_UPLOAD_CORS_ORIGIN: must be a valid URL');
+}
+if (!['http:', 'https:'].includes(parsedMuxOrigin.protocol)
+    || parsedMuxOrigin.origin !== muxUploadOrigin) {
+  throw new Error(
+    'Invalid environment variables:\nMUX_UPLOAD_CORS_ORIGIN: must be an HTTP(S) origin without a path',
+  );
+}
+if (parsed.NODE_ENV === 'production' && parsedMuxOrigin.protocol !== 'https:') {
+  throw new Error(
+    'Invalid environment variables:\nMUX_UPLOAD_CORS_ORIGIN: HTTPS is required in production',
+  );
+}
+
 const verificationUrl = new URL(parsed.EMAIL_VERIFICATION_URL);
 const passwordResetUrl = new URL(parsed.PASSWORD_RESET_URL);
 for (const [name, url] of [
@@ -215,5 +265,6 @@ for (const [name, url] of [
 export const env = Object.freeze({
   ...parsed,
   CORS_ORIGINS: corsOrigins,
+  MUX_UPLOAD_CORS_ORIGIN: muxUploadOrigin,
   DATABASE_URI: parsed.NODE_ENV === 'test' ? parsed.MONGO_TEST_URI : parsed.MONGO_URI,
 });

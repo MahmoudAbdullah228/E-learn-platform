@@ -9,6 +9,8 @@ const adminSeedPath = fileURLToPath(new URL('../scripts/seed-admin.js', import.m
 const productionAuth = {
   JWT_ACCESS_SECRET: 'M8vQ3xL9pR2nK7cD4wF6yH1jT5sZ0aB2',
   REFRESH_TOKEN_PEPPER: 'G4uN8mC1qW6eY9kP3rV7xS2dF5hJ0tL8',
+  MUX_UPLOAD_CORS_ORIGIN: 'https://app.example.test',
+  MUX_TEST_MODE: 'false',
 };
 
 function importEnvironment(overrides, omittedKeys = []) {
@@ -178,6 +180,64 @@ test('SMTP authentication can be omitted with blank env-file values', () => {
   });
 
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+});
+
+test('Mux credentials must be complete and production requires them', () => {
+  const partial = importEnvironment({ MUX_TOKEN_ID: 'only-one-value' }, [
+    'MUX_TOKEN_SECRET', 'MUX_WEBHOOK_SECRET',
+  ]);
+  assert.notEqual(partial.status, 0);
+  assert.match(`${partial.stdout}${partial.stderr}`, /must be provided together/);
+
+  const production = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    MUX_UPLOAD_CORS_ORIGIN: 'https://app.example.test',
+    ...productionAuth,
+  }, ['MUX_TOKEN_ID', 'MUX_TOKEN_SECRET', 'MUX_WEBHOOK_SECRET']);
+  assert.notEqual(production.status, 0);
+  assert.match(`${production.stdout}${production.stderr}`, /Mux credentials are required/);
+});
+
+test('production rejects temporary Mux test assets', () => {
+  const result = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    ...productionAuth,
+    MUX_TOKEN_ID: 'mux-token-id',
+    MUX_TOKEN_SECRET: 'mux-token-secret',
+    MUX_WEBHOOK_SECRET: 'mux-webhook-secret',
+    MUX_TEST_MODE: 'true',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}${result.stderr}`, /MUX_TEST_MODE must be false in production/);
+});
+
+test('Mux upload CORS origin must be an origin and production requires HTTPS', () => {
+  const path = importEnvironment({ MUX_UPLOAD_CORS_ORIGIN: 'https://app.example.test/upload' });
+  assert.notEqual(path.status, 0);
+  assert.match(`${path.stdout}${path.stderr}`, /without a path/);
+
+  const insecure = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    ...productionAuth,
+    MUX_UPLOAD_CORS_ORIGIN: 'http://app.example.test',
+  });
+  assert.notEqual(insecure.status, 0);
+  assert.match(`${insecure.stdout}${insecure.stderr}`, /MUX_UPLOAD_CORS_ORIGIN: HTTPS/);
 });
 
 test('access tokens are fixed to the accepted 15-minute lifetime', () => {

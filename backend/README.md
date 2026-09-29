@@ -1,13 +1,14 @@
 # E-Learning Marketplace API
 
-Stories 1.1 through 1.5 provide the production-oriented foundation, registration, email verification, secure session management, password reset, and basic user profiles. Courses and payments remain outside the current scope.
+Stories 1.1 through 2.4 provide the production-oriented foundation, authentication, basic profiles, instructor application review, draft courses, ordered curricula, and Mux direct-video uploads. Publishing workflow, secure playback, and payments remain outside the current scope.
 
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)
-- MongoDB available locally or through a connection string
+- MongoDB replica set or Atlas deployment available locally or through a connection string
 - A dedicated MongoDB database for tests whose name ends in `_test`
 - An SMTP server or local SMTP catcher for development
+- A Mux Video environment and API/webhook credentials for video uploads
 
 ## Local setup
 
@@ -15,6 +16,8 @@ Stories 1.1 through 1.5 provide the production-oriented foundation, registration
 cd O:\E-learning-platform\backend
 npm install
 Copy-Item .env.example .env
+npm run mongo:local
+npm run seed:categories
 npm run dev
 ```
 
@@ -80,6 +83,57 @@ PATCH /api/v1/users/me
 
 Both endpoints require a live bearer session. The GET endpoint returns only `id`, `name`, `email`, `roles`, and `emailVerifiedAt`. PATCH accepts exactly `{ "name": string }`; email, roles, status, passwords, and other fields are rejected. Names are trimmed, limited to 2–100 characters, and cannot contain control or Unicode formatting characters.
 
+Story 2.1 adds instructor applications and administrative review:
+
+```text
+POST  /api/v1/instructor-applications
+GET   /api/v1/instructor-applications/me
+GET   /api/v1/admin/instructor-applications
+PATCH /api/v1/admin/instructor-applications/:applicationId
+```
+
+Students can have only one pending application, enforced by a partial unique MongoDB index. A rejected student may submit a new application; an approved instructor cannot. Admin listing supports `status`, `page`, and `limit` filters. Approval adds the `instructor` role without removing `student`, while rejection requires a reason. Submission and review update the application and user in real transactions. Startup checks replica set support and initializes the application indexes before accepting HTTP traffic. Integration tests fail on standalone databases; rollback tests are never skipped.
+
+`npm run mongo:local` starts a dedicated loopback-only single-node replica set on port 27018 named `elearnLocal`, using installed `mongod` (override with `MONGOD_BINARY`). Data and logs persist in ignored `.local/mongodb/`. Run it again after restarting the computer. It does not alter the service or data on port 27017. The new development database starts empty; accounts are not automatically migrated. Use the URIs in `.env.example`, or Atlas with separate development and `_test` databases. Startup code `MONGODB_REPLICA_SET_REQUIRED` identifies an unsupported standalone database.
+
+Story 2.2 adds instructor-owned draft courses:
+
+```text
+GET   /api/v1/instructor/courses
+POST  /api/v1/instructor/courses
+GET   /api/v1/instructor/courses/:courseId
+PATCH /api/v1/instructor/courses/:courseId
+```
+
+Only authenticated instructors can use these endpoints. Every single-course query includes the authenticated owner and `draft` status, preventing cross-instructor access and excluding later workflow states. Creation requires an active category, stores money as a safe integer in the smallest EGP unit, and allocates a globally unique slug through the database unique index with bounded collision retries. Slugs stay stable when titles change. PATCH accepts at least one editable field and rejects ownership, slug, status, and cover-storage fields. List responses are owner-scoped, newest-updated first, and paginated with defaults `page=1`, `limit=20`.
+
+Story 2.3 adds ordered sections and lessons:
+
+```text
+GET    /api/v1/instructor/courses/:courseId/sections
+POST   /api/v1/instructor/courses/:courseId/sections
+PUT    /api/v1/instructor/courses/:courseId/sections/order
+PATCH  /api/v1/instructor/courses/:courseId/sections/:sectionId
+DELETE /api/v1/instructor/courses/:courseId/sections/:sectionId
+POST   /api/v1/instructor/sections/:sectionId/lessons
+PUT    /api/v1/instructor/sections/:sectionId/lessons/order
+PATCH  /api/v1/instructor/lessons/:lessonId
+DELETE /api/v1/instructor/lessons/:lessonId
+```
+
+Only the owner of a draft course can read or change its curriculum. New children append at the next position. Reorder bodies contain `{ "orderedIds": [...] }` and must include the exact current ID set without duplicates. Curriculum writes serialize on the parent course and run in MongoDB transactions, so concurrent appends cannot commit duplicate positions. Deleting a section removes its lessons atomically; deleting sections or lessons compacts the remaining positions. A course or section supports at most 200 direct children.
+
+Story 2.4 adds Mux Direct Uploads:
+
+```text
+POST /api/v1/instructor/lessons/:lessonId/video-upload
+POST /api/v1/webhooks/video
+```
+
+The authenticated endpoint reserves one attempt for an owned draft lesson and returns a temporary URL. The frontend uploads the file directly to Mux; video bytes never pass through Express. Mux webhooks use a raw JSON body and the `mux-signature` header. Valid duplicate events are idempotent, timestamps outside five minutes are rejected, and events from older attempts cannot overwrite the current lesson. Assets are created without a playback policy so course videos are not accidentally public; secure playback belongs to a later story.
+
+Set `MUX_TOKEN_ID`, `MUX_TOKEN_SECRET`, and `MUX_WEBHOOK_SECRET` from the same Mux environment. Set `MUX_UPLOAD_CORS_ORIGIN` to the exact frontend origin. Local configuration defaults to `MUX_TEST_MODE=true`; these test assets are limited to ten seconds and removed after 24 hours. Production startup requires `MUX_TEST_MODE=false`. Deleting a lesson or section records a cleanup job in the same MongoDB transaction; a background worker then removes its Mux upload or asset with bounded retries. See `docs/adr-0004-mux-video.md` for the decision and local webhook forwarding flow.
+
 Forgot-password always returns the same `202` response and durably queues the request before any account lookup, preventing account enumeration. The worker sends mail only for active accounts. Reset tokens expire after 30 minutes, are stored only as hashes, and can change the password once. A successful reset atomically advances both password and session versions, immediately invalidating every existing access and refresh token even if best-effort session cleanup fails.
 
 Each family allows at most 4096 successful refresh rotations. The next refresh revokes the family and returns `401 INVALID_REFRESH_TOKEN`, requiring login again. The bound is enforced atomically with the hash append. No historical hashes are evicted, preserving replay detection for the whole family lifetime while bounding document and index growth. Existing families already at or above the limit are revoked on their next refresh.
@@ -92,7 +146,7 @@ Login, refresh, and logout require an allowed `Origin`, or an allowed `Referer` 
 
 Resend and forgot-password return `202` after persisting a request in MongoDB, without looking up the account or waiting for SMTP. The server runs one authentication-email worker that checks eligibility and sends the appropriate email. Jobs contain an email address and purpose, never raw tokens; they expire after 24 hours. A worker claims each job atomically with a ten-minute lease, retries failures up to three attempts with a one-minute delay, and removes completed jobs. Expired leases allow recovery after a restart. Delivery is at-least-once: a crash between SMTP acceptance and job completion may cause a replacement email.
 
-The existing verification token remains valid until SMTP accepts a replacement and its hash is saved. If that database write fails, the original remains usable and the job retries; an accepted email alone cannot prove the new link was activated. Verification uses an atomic `emailVerifiedAt: null` user update to prevent replay. Token cleanup follows that update; cleanup failure cannot make an already verified account accept the token again. This works on standalone MongoDB without multi-document transactions.
+The existing verification token remains valid until SMTP accepts a replacement and its hash is saved. If that database write fails, the original remains usable and the job retries; an accepted email alone cannot prove the new link was activated. Verification consumes the exact current token hash and verifies the user in one MongoDB transaction. That transaction prevents replay and ensures a token replaced concurrently cannot verify the account. A replica set or mongos is therefore required, as described in the database setup above.
 
 Startup retries are cancelled by SIGINT/SIGTERM, including retry backoff. An in-flight MongoDB connection attempt remains bounded by the five-second server-selection timeout and is closed if it completes after cancellation.
 

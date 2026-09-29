@@ -1,4 +1,4 @@
-# Frontend API handoff — Stories 1.1 through 1.5
+# Frontend API handoff — Stories 1.1 through 2.4
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 Import the attached `openapi.yaml` or download `/api/v1/openapi.json` from the running API.
@@ -19,6 +19,25 @@ set your client's backend origin explicitly. JSON request bodies require `Conten
 | POST | `/auth/reset-password` | `{ token, password }` | 200, `{ data: { passwordReset: true }, message }` |
 | GET | `/users/me` | Bearer access token | 200, `{ data: { user } }` |
 | PATCH | `/users/me` | Bearer token + `{ name }` | 200, `{ data: { user }, message }` |
+| POST | `/instructor-applications` | Bearer token + `{ bio, expertise }` | 201, `{ data: { application }, message }` |
+| GET | `/instructor-applications/me` | Bearer token | 200, `{ data: { application } }` |
+| GET | `/admin/instructor-applications` | Admin Bearer token + optional `status`, `page`, `limit` | 200, `{ data: { applications, pagination } }` |
+| PATCH | `/admin/instructor-applications/:applicationId` | Admin Bearer token + approval or rejection body | 200, `{ data: { application }, message }` |
+| GET | `/instructor/courses` | Instructor Bearer token + optional `status=draft`, `page`, `limit` | 200, `{ data: { courses, pagination } }` |
+| POST | `/instructor/courses` | Instructor Bearer token + course input | 201, `{ data: { course }, message }` |
+| GET | `/instructor/courses/:courseId` | Instructor Bearer token | 200, `{ data: { course } }` |
+| PATCH | `/instructor/courses/:courseId` | Instructor Bearer token + partial course input | 200, `{ data: { course }, message }` |
+| GET | `/instructor/courses/:courseId/sections` | Instructor Bearer token | 200, `{ data: { sections } }`, each section includes ordered lessons |
+| POST | `/instructor/courses/:courseId/sections` | Instructor Bearer token + `{ title }` | 201, `{ data: { section } }` |
+| PUT | `/instructor/courses/:courseId/sections/order` | Instructor Bearer token + `{ orderedIds }` | 200, `{ data: { sections } }` |
+| PATCH | `/instructor/courses/:courseId/sections/:sectionId` | Instructor Bearer token + `{ title }` | 200, `{ data: { section } }` |
+| DELETE | `/instructor/courses/:courseId/sections/:sectionId` | Instructor Bearer token | 200, `{ data: { deletedId } }` |
+| POST | `/instructor/sections/:sectionId/lessons` | Instructor Bearer token + `{ title, isPreview? }` | 201, `{ data: { lesson } }` |
+| PUT | `/instructor/sections/:sectionId/lessons/order` | Instructor Bearer token + `{ orderedIds }` | 200, `{ data: { lessons } }` |
+| PATCH | `/instructor/lessons/:lessonId` | Instructor Bearer token + partial `{ title, isPreview }` | 200, `{ data: { lesson } }` |
+| DELETE | `/instructor/lessons/:lessonId` | Instructor Bearer token | 200, `{ data: { deletedId } }` |
+| POST | `/instructor/lessons/:lessonId/video-upload` | Instructor Bearer token; no file/body required | 201, `{ data: { upload: { id, url, timeoutSeconds, videoStatus } } }` |
+| POST | `/webhooks/video` | Mux only: raw JSON + `mux-signature` | 200, `{ data: { received, handled } }` |
 
 Registration creates students only. Do not send `roles`, `status`, or other extra fields.
 Names are trimmed (2–100 characters); emails are normalized to lowercase.
@@ -41,6 +60,19 @@ All errors have `{ error: { code, message, details: [] } }`:
 | 400 `INVALID_OR_EXPIRED_PASSWORD_RESET_TOKEN` | Show an expired/invalid link message and offer a new reset email |
 | 409 `PASSWORD_RESET_IN_PROGRESS` | Wait briefly and retry, or use the replacement email link when it arrives |
 | 409 `RESOURCE_ALREADY_EXISTS` | Account cannot be registered again; offer resend |
+| 409 `APPLICATION_ALREADY_PENDING` | Show the existing pending application instead of resubmitting |
+| 409 `INSTRUCTOR_ALREADY_APPROVED` | Refresh user permissions and hide the application action |
+| 409 `APPLICATION_ALREADY_REVIEWED` | Refresh the admin review list; another review already won |
+| 409 `APPLICANT_STATE_CONFLICT` | Refresh the application and applicant state before retrying |
+| 400 `INVALID_CATEGORY` | Refresh categories and require an active category |
+| 404 `COURSE_NOT_FOUND` | Remove inaccessible/non-draft course state from the current instructor UI |
+| 409 `COURSE_SLUG_CONFLICT` | Keep the form values and allow the instructor to retry creation |
+| 404 `CURRICULUM_NOT_FOUND` | Reload the draft; the course/content is missing, non-draft, or not owned |
+| 409 `INVALID_CURRICULUM_ORDER` | Reload all siblings and resend their exact current ID set |
+| 409 `CURRICULUM_LIMIT_REACHED` | Disable adding more direct children; the maximum is 200 |
+| 409 `VIDEO_UPLOAD_IN_PROGRESS` | Keep showing progress; do not request another URL |
+| 409 `VIDEO_ALREADY_EXISTS` | Keep the ready video; replacement is not part of Story 2.4 |
+| 503 `VIDEO_PROVIDER_UNAVAILABLE` | Preserve UI state and let the instructor retry later |
 | 429 rate-limit error | Respect the `Retry-After` header before allowing another attempt |
 | 401 `INVALID_CREDENTIALS` | Show a generic email/password error |
 | 401 `INVALID_REFRESH_TOKEN` | Clear local auth state and return to login |
@@ -81,6 +113,36 @@ Reset links expire after 30 minutes and work once. A newer accepted reset email 
 ## Basic profile flow
 
 Use `GET /users/me` after login or a successful refresh to load the current public profile. Use `PATCH /users/me` to change the display name. Send only `{ name }`; the API rejects email, role, status, password, and unknown fields. Replace the locally cached user object with the returned value after an update. A `401` means the access token, account, or device session is no longer valid; follow the normal refresh flow once.
+
+## Instructor application flow
+
+If an applicant account was deleted, admin listing retains its original `userId` and returns `applicant: null`; display an unavailable-account label. Omitted pagination defaults to `page=1` and `limit=20`.
+
+1. Submit `{ bio, expertise }` to `POST /instructor-applications`. Bio is 50–2000 characters and expertise is 2–200 characters.
+2. Read `GET /instructor-applications/me` to show the latest status. `application` is `null` when the user has never applied.
+3. For the admin UI, call `GET /admin/instructor-applications?status=pending&page=1&limit=20`. The maximum limit is 100.
+4. Approve with `{ "status": "approved" }`, or reject with `{ "status": "rejected", "rejectionReason": "..." }` where the reason is 5–500 characters.
+
+Only an admin can list or review applications. A reviewed application is immutable. Rejected users may submit a new application, while approved users cannot. After approval, existing access tokens can use instructor permissions on subsequent requests because the backend reloads current roles from the database. Application responses use `Cache-Control: no-store`.
+
+## Draft course flow
+
+Create a course with `title`, `categoryId`, `description`, and integer `priceMinor`. `requirements` and `learningOutcomes` are optional arrays of up to 30 unique strings, and currency defaults to `EGP`. Do not send `slug`, `status`, `instructorId`, or `coverKey`; the API owns those fields. The selected category must still be active when the request reaches the API.
+
+Use `GET /instructor/courses` for the dashboard and `GET /instructor/courses/:courseId` for editing. Both expose only the authenticated instructor's drafts. PATCH is partial but must contain at least one editable field. A title change does not change the slug. `category` can be `null` if its original database record was deleted; retain `categoryId` and prompt the instructor to choose an active category. Prices are returned in the smallest EGP unit and should be formatted for display without floating-point persistence.
+
+## Curriculum flow
+
+Load the editor with `GET /instructor/courses/:courseId/sections`; sections and nested lessons are already ordered by `position`. Create operations append automatically, so the frontend must not send a position. To reorder, send every current sibling ID exactly once in the desired order. If the API returns `409 INVALID_CURRICULUM_ORDER`, reload before retrying because another request changed the set. Section deletion also removes its lessons. Lesson create accepts `isPreview` (default `false`); only `title` and `isPreview` are directly editable.
+
+## Mux video upload flow
+
+1. Call `POST /instructor/lessons/:lessonId/video-upload` without sending the file.
+2. Give `data.upload.url` to Mux Uploader/UpChunk, or upload the selected file directly to that URL. Never persist or log the temporary URL.
+3. Keep the lesson UI in `pending`/`processing`. Reload the curriculum to observe webhook-driven `videoStatus` and `durationSeconds` changes.
+4. `ready` means processing completed. Story 2.4 intentionally exposes no public playback ID; playback authorization will be added with enrollment access.
+
+The browser must not call `/webhooks/video`; it is a provider callback. A second upload is rejected while one is pending/processing and after it becomes ready. Failed attempts may request a new URL. Development Mux test assets accept only short proof-of-concept videos.
 
 A session allows up to 4096 refresh rotations. Once exhausted, refresh returns `401 INVALID_REFRESH_TOKEN` and ends that device session; show login again. Historical token hashes are retained rather than evicted, so replay detection remains intact.
 Use `credentials: 'include'` for login, refresh, and logout. Registration and email-verification endpoints do not require an Authorization header.
