@@ -6,14 +6,13 @@ import { env } from '../../config/env.js';
 import { Course } from '../../models/Course.js';
 import { Lesson } from '../../models/Lesson.js';
 import { MediaAsset } from '../../models/MediaAsset.js';
-import { MediaCleanupJob } from '../../models/MediaCleanupJob.js';
 import { Section } from '../../models/Section.js';
 import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { cloudinaryPublicId } from '../../utils/cloudinaryPublicId.js';
+import { enqueueMediaCleanup } from '../../services/mediaCleanupQueue.service.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
-const uploadSettlementMs = 5 * 60 * 1000;
 const purposeSettings = Object.freeze({
   avatar: { resourceType: 'image', deliveryType: 'upload', maxBytes: () => env.CLOUDINARY_MAX_IMAGE_BYTES },
   course_cover: { resourceType: 'image', deliveryType: 'upload', maxBytes: () => env.CLOUDINARY_MAX_IMAGE_BYTES },
@@ -75,12 +74,6 @@ function toAsset(asset) {
     status: asset.status, bytes: asset.bytes, format: asset.format,
     originalName: asset.originalName, attachedAt: asset.attachedAt,
   };
-}
-
-async function enqueueCleanup(asset, session, availableAt) {
-  await MediaCleanupJob.updateOne({ assetId: asset._id }, {
-    $setOnInsert: { assetId: asset._id, availableAt },
-  }, { upsert: true, session });
 }
 
 export function createMediaService({ provider, clock = () => new Date() }) {
@@ -156,9 +149,8 @@ export function createMediaService({ provider, clock = () => new Date() }) {
           await Model.updateOne({ _id: asset.targetId },
             { $set: { [owned.field]: claimed._id } }, { session });
           if (previous && previous.toString() !== claimed.id) {
-            const old = await MediaAsset.findOneAndUpdate({ _id: previous, status: 'ready' },
-              { $set: { status: 'deleting' } }, { session });
-            if (old) await enqueueCleanup(old, session, clock());
+            const old = await MediaAsset.findOne({ _id: previous, status: 'ready' }).session(session);
+            if (old) await enqueueMediaCleanup(old, session, clock());
           }
         }
         return toAsset(claimed);
@@ -180,14 +172,7 @@ export function createMediaService({ provider, clock = () => new Date() }) {
           await Model.updateOne({ _id: asset.targetId, [owned.field]: asset._id },
             { $set: { [owned.field]: null } }, { session });
         }
-        const wasPending = asset.status === 'pending';
-        asset.status = 'deleting';
-        await asset.save({ session });
-        await enqueueCleanup(asset, session, wasPending
-          ? new Date(Math.max(asset.expiresAt.getTime(),
-            asset.providerUploadValidUntil?.getTime() ?? 0, clock().getTime())
-            + uploadSettlementMs)
-          : clock());
+        await enqueueMediaCleanup(asset, session, clock());
       });
     },
   });

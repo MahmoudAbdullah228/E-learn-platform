@@ -19,6 +19,7 @@ import { User } from '../src/models/User.js';
 import { createSessionService } from '../src/modules/auth/session.service.js';
 import { createMediaCleanupWorker } from '../src/services/mediaCleanupWorker.service.js';
 import { createCloudinaryMediaProvider } from '../src/services/cloudinaryMedia.service.js';
+import { enqueueAttachmentCleanup } from '../src/services/mediaCleanupQueue.service.js';
 
 const uploaded = new Map();
 const deleted = [];
@@ -386,6 +387,158 @@ test('expired pending intent cannot confirm and receives a delayed cleanup job',
   assert.equal((await MediaAsset.findById(asset.id)).status, 'deleting');
   assert.ok(job.availableAt.getTime() >= asset.providerUploadValidUntil.getTime() + 300000);
   assert.deepEqual(deleted, []);
+});
+
+for (const target of ['lesson', 'section']) {
+  test(`deleting a ${target} cancels unconfirmed PDF intents and waits for upload settlement`, async () => {
+    const owner = await account(`pending-pdf-${target}@example.test`, true);
+    const { course, lesson } = await curriculum(owner.user.id);
+    const created = await intent(owner.token, 'lesson_attachment', lesson.id);
+    const asset = await MediaAsset.findById(created.body.data.assetId);
+    assert.deepEqual((await Lesson.findById(lesson.id)).attachments, []);
+    // Simulate a legacy due job that must not bypass the new deletion deadline.
+    await MediaCleanupJob.create({ assetId: asset._id, availableAt: new Date(0) });
+    const path = target === 'lesson' ? `/api/v1/instructor/lessons/${lesson.id}`
+      : `/api/v1/instructor/courses/${course.id}/sections/${lesson.sectionId}`;
+    await auth('delete', path, owner.token).expect(200);
+    assert.equal(await Lesson.findById(lesson.id), null);
+    const cancelling = await MediaAsset.findById(asset.id).select('+cleanupNotBefore');
+    const deadline = cancelling.cleanupNotBefore;
+    assert.equal(cancelling.status, 'deleting');
+    assert.ok(deadline.getTime() >= asset.providerUploadValidUntil.getTime() + 300_000);
+    assert.equal((await MediaCleanupJob.findOne({ assetId: asset.id })).availableAt.getTime(),
+      deadline.getTime());
+    await auth('post', `/api/v1/media/${asset.id}/confirm`, owner.token).send({}).expect(404);
+
+    let now = new Date(deadline.getTime() - 1);
+    const worker = createMediaCleanupWorker({ provider, clock: () => now });
+    try {
+      assert.equal(await worker.processNext(), false);
+      assert.deepEqual(deleted, []);
+      // An old or previously claimed job becoming due cannot defeat the asset fence.
+      await MediaCleanupJob.updateOne({ assetId: asset.id }, { $set: { availableAt: new Date(0) } });
+      assert.equal(await worker.processNext(), true);
+      assert.deepEqual(deleted, []);
+      const postponed = await MediaCleanupJob.findOne({ assetId: asset.id }).select('+leaseId');
+      assert.equal(postponed.availableAt.getTime(), deadline.getTime());
+      assert.equal(postponed.attempts, 0);
+      assert.equal(postponed.leaseId, null);
+      // Simulate a provider accepting the bytes after local target deletion.
+      await upload(asset.id);
+      now = deadline;
+      assert.equal(await worker.processNext(), true);
+      assert.deepEqual(deleted, [asset.publicId]);
+      assert.equal((await MediaAsset.findById(asset.id)).status, 'deleted');
+      assert.equal(await MediaCleanupJob.countDocuments({ assetId: asset.id }), 0);
+    } finally { await worker.stop(); }
+  });
+}
+
+test('legacy pending attachment references dedupe and queue with a delayed deadline', async () => {
+  const owner = await account('legacy-pending-ref@example.test', true);
+  const { lesson } = await curriculum(owner.user.id);
+  const created = await intent(owner.token, 'lesson_attachment', lesson.id);
+  const assetId = created.body.data.assetId;
+  await Lesson.updateOne({ _id: lesson.id }, { $set: { attachments: [assetId] } });
+  await auth('delete', `/api/v1/instructor/lessons/${lesson.id}`, owner.token).expect(200);
+  const asset = await MediaAsset.findById(assetId).select('+cleanupNotBefore');
+  assert.equal(asset.status, 'deleting');
+  assert.equal(await MediaCleanupJob.countDocuments({ assetId }), 1);
+  const before = await MediaCleanupJob.findOne({ assetId });
+  await mongoose.connection.transaction(async session => {
+    await enqueueAttachmentCleanup([{ _id: lesson._id, attachments: [assetId, assetId] }],
+      session, new Date(0));
+  });
+  const afterJob = await MediaCleanupJob.findOne({ assetId });
+  assert.equal(afterJob.availableAt.getTime(), before.availableAt.getTime());
+  assert.equal(afterJob.availableAt.getTime(), asset.cleanupNotBefore.getTime());
+  assert.equal(await MediaCleanupJob.countDocuments({ assetId }), 1);
+});
+
+test('expiry sweep repairs an existing immediate job rather than bypassing settlement', async () => {
+  const owner = await account('pending-expiry-repair@example.test', true);
+  const { lesson } = await curriculum(owner.user.id);
+  const created = await intent(owner.token, 'lesson_attachment', lesson.id);
+  const assetId = created.body.data.assetId;
+  const now = new Date();
+  await MediaAsset.updateOne({ _id: assetId }, { $set: { expiresAt: new Date(now.getTime() - 1) } });
+  await MediaCleanupJob.create({ assetId, availableAt: new Date(0) });
+  const worker = createMediaCleanupWorker({ provider, clock: () => now });
+  try {
+    assert.equal(await worker.processNext(), true);
+    assert.deepEqual(deleted, []);
+    const asset = await MediaAsset.findById(assetId).select('+cleanupNotBefore');
+    const job = await MediaCleanupJob.findOne({ assetId });
+    assert.equal(asset.status, 'deleting');
+    assert.equal(job.availableAt.getTime(), asset.cleanupNotBefore.getTime());
+    assert.ok(job.availableAt.getTime() >= asset.providerUploadValidUntil.getTime() + 300_000);
+    assert.equal(await worker.processNext(), false);
+  } finally { await worker.stop(); }
+});
+
+test('an old pending job is postponed without starving a ready cleanup job', async () => {
+  const owner = await account('pending-job-fairness@example.test');
+  const pending = await intent(owner.token, 'avatar', owner.user.id);
+  await MediaCleanupJob.create({ assetId: pending.body.data.assetId, availableAt: new Date(0) });
+  const ready = await intent(owner.token, 'avatar', owner.user.id);
+  const asset = await upload(ready.body.data.assetId);
+  await auth('post', `/api/v1/media/${asset.id}/confirm`, owner.token).send({}).expect(200);
+  await auth('delete', `/api/v1/media/${asset.id}`, owner.token).expect(204);
+  await app.locals.mediaCleanupWorker.processNext();
+  assert.deepEqual(deleted, [asset.publicId]);
+  const postponed = await MediaCleanupJob.findOne({ assetId: pending.body.data.assetId });
+  assert.ok(postponed.availableAt > new Date());
+  assert.equal(postponed.attempts, 0);
+});
+
+test('legacy deleting intents without a stored deadline still respect provider validity', async () => {
+  const owner = await account('legacy-deleting-deadline@example.test', true);
+  const { lesson } = await curriculum(owner.user.id);
+  const created = await intent(owner.token, 'lesson_attachment', lesson.id);
+  const assetId = created.body.data.assetId;
+  await MediaAsset.updateOne({ _id: assetId }, { $set: { status: 'deleting' } });
+  await MediaCleanupJob.create({ assetId, availableAt: new Date(0) });
+  const asset = await MediaAsset.findById(assetId);
+  const deadline = new Date(Math.max(asset.expiresAt.getTime(),
+    asset.providerUploadValidUntil.getTime()) + 300_000);
+  let now = new Date(deadline.getTime() - 1);
+  const worker = createMediaCleanupWorker({ provider, clock: () => now });
+  try {
+    assert.equal(await worker.processNext(), true);
+    assert.deepEqual(deleted, []);
+    assert.equal((await MediaCleanupJob.findOne({ assetId })).availableAt.getTime(), deadline.getTime());
+    now = deadline;
+    assert.equal(await worker.processNext(), true);
+    assert.deepEqual(deleted, [asset.publicId]);
+  } finally { await worker.stop(); }
+});
+
+test('attachment cancellation and target deletion roll back together on queue failure', async t => {
+  const owner = await account('pending-cleanup-rollback@example.test', true);
+  const { lesson } = await curriculum(owner.user.id);
+  const created = await intent(owner.token, 'lesson_attachment', lesson.id);
+  const stub = t.mock.method(MediaCleanupJob, 'updateOne', async () => {
+    throw new Error('Simulated queue persistence failure');
+  });
+  try {
+    const result = await auth('delete', `/api/v1/instructor/lessons/${lesson.id}`, owner.token)
+      .expect(500);
+    assert.equal(result.body.error.code, 'INTERNAL_SERVER_ERROR');
+    assert.ok(await Lesson.exists({ _id: lesson.id }));
+    const asset = await MediaAsset.findById(created.body.data.assetId).select('+cleanupNotBefore');
+    assert.equal(asset.status, 'pending');
+    assert.equal(asset.cleanupNotBefore, null);
+    assert.equal(await MediaCleanupJob.countDocuments(), 0);
+  } finally { stub.mock.restore(); }
+});
+
+test('missing attachment references create no cleanup jobs', async () => {
+  const owner = await account('missing-cleanup-asset@example.test', true);
+  const { lesson } = await curriculum(owner.user.id);
+  await Lesson.updateOne({ _id: lesson.id },
+    { $set: { attachments: [new mongoose.Types.ObjectId()] } });
+  await auth('delete', `/api/v1/instructor/lessons/${lesson.id}`, owner.token).expect(200);
+  assert.equal(await MediaCleanupJob.countDocuments(), 0);
 });
 
 test('cleanup sweeps expired intents in bounded batches instead of one per interval', async () => {

@@ -16,6 +16,7 @@ const schema = new mongoose.Schema({
   expiresAt: { type: Date, required: true },
   providerUploadValidUntil: { type: Date, required: true },
   attachedAt: { type: Date, default: null },
+  cleanupNotBefore: { type: Date, default: null, select: false },
 }, { timestamps: true });
 
 schema.index({ publicId: 1 }, { unique: true });
@@ -24,5 +25,6 @@ schema.index({ providerAssetId: 1 }, {
 });
 schema.index({ status: 1, expiresAt: 1 });
 schema.index({ ownerId: 1, status: 1 });
+schema.index({ targetId: 1, purpose: 1, status: 1 });
 
 export const MediaAsset = mongoose.model('MediaAsset', schema);

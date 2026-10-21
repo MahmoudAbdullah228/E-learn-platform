@@ -24,6 +24,11 @@ validation with **422 passed, 0 failed, 0 skipped** (102.13 seconds), after loca
 startup. Avatar-display and curriculum counts/duration regressions are documented in
 [the closure record](sprint_1_2_closure.md). This is isolated local/fake-provider evidence;
 the staging acceptance rows below remain NOT RUN.
+PR #7 pending-upload cleanup follow-up, 2026-10-21: `npm run verify` passed lint/OpenAPI
+and **432 tests, 0 failed, 0 skipped** (115.02 seconds). Ten regression cases cover safe
+pending cancellation, legacy queued jobs and rollback; see [the cleanup review record](media-cleanup-review-fix.md).
+This is isolated local test evidence only; no live asset was deleted and no staging case
+was marked PASS by this run.
 `git -c core.autocrlf=false diff --check` and `npm run staging:status` dry run passed.
 No staging provider calls, real Checkout, deployment, demo seeding or GitHub writes were
 performed. This is not live staging/provider evidence.

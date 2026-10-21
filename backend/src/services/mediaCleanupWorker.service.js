@@ -8,10 +8,11 @@ import { Lesson } from '../models/Lesson.js';
 import { MediaAsset } from '../models/MediaAsset.js';
 import { MediaCleanupJob } from '../models/MediaCleanupJob.js';
 import { User } from '../models/User.js';
+import { enqueueMediaCleanup } from './mediaCleanupQueue.service.js';
+import { pendingUploadCleanupAt } from './mediaCleanup.policy.js';
 
 const leaseMs = 10 * 60 * 1000;
 const maxAttempts = 10;
-const uploadSettlementMs = 5 * 60 * 1000;
 const maxWorkPerTick = 25;
 
 async function stillReferenced(asset) {
@@ -42,19 +43,9 @@ export function createMediaCleanupWorker({ provider, clock = () => new Date(),
     if (expired) {
       await mongoose.connection.transaction(async session => {
         controller.signal.throwIfAborted();
-        const changed = await MediaAsset.updateOne({ _id: expired._id, status: 'pending' },
-          { $set: { status: 'deleting' } }, { session });
+        await enqueueMediaCleanup(expired, session, now);
         controller.signal.throwIfAborted();
-        if (changed.modifiedCount) {
-          await MediaCleanupJob.updateOne({ assetId: expired._id }, {
-            $setOnInsert: { assetId: expired._id,
-              availableAt: new Date(Math.max(now.getTime(),
-                expired.providerUploadValidUntil?.getTime() ?? expired.expiresAt.getTime() + 3600000)
-                + uploadSettlementMs) },
-          }, { upsert: true, session });
-          controller.signal.throwIfAborted();
-          expiredQueued = true;
-        }
+        expiredQueued = true;
       });
     }
 
@@ -66,17 +57,30 @@ export function createMediaCleanupWorker({ provider, clock = () => new Date(),
     { returnDocument: 'after', sort: { availableAt: 1 } }).select('+leaseId');
     if (!job) return expiredQueued;
 
-    async function release() {
+    async function release(availableAt = new Date(clock().getTime() + 5000)) {
       if (stopped) return;
       await MediaCleanupJob.updateOne({ _id: job._id, leaseId },
-        { $set: { leaseId: null, availableAt: clock() } });
+        { $set: { leaseId: null, availableAt } });
     }
     if (stopped) return false;
     try {
-      const asset = await MediaAsset.findById(job.assetId);
+      const asset = await MediaAsset.findById(job.assetId).select('+cleanupNotBefore');
       if (stopped) return false;
       if (!asset || asset.status === 'deleted') {
         await MediaCleanupJob.deleteOne({ _id: job._id, leaseId });
+        return true;
+      }
+      if (asset.status === 'pending') {
+        // Repair old prematurely queued jobs without polling them on every tick.
+        await release(new Date(Math.max(now.getTime() + 5000, asset.expiresAt.getTime())));
+        return true;
+      }
+      const cleanupNotBefore = asset.cleanupNotBefore
+        ?? (asset.status === 'deleting' && !asset.providerAssetId && !asset.attachedAt
+          ? pendingUploadCleanupAt(asset) : null);
+      if (cleanupNotBefore && cleanupNotBefore > now) {
+        // A previously due/claimed job cannot override a pending upload's deadline.
+        await release(cleanupNotBefore);
         return true;
       }
       if (asset.status !== 'deleting' || await stillReferenced(asset)) {
