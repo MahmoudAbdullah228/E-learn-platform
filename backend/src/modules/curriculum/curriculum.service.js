@@ -4,6 +4,7 @@ import { Course } from '../../models/Course.js';
 import { Section } from '../../models/Section.js';
 import { Lesson } from '../../models/Lesson.js';
 import { enqueueVideoCleanup } from '../../services/videoCleanupQueue.service.js';
+import { enqueueAttachmentCleanup } from '../../services/mediaCleanupQueue.service.js';
 import { ApiError } from '../../utils/ApiError.js';
 
 const MAX_CHILDREN = 200;
@@ -16,8 +17,10 @@ function notFound() {
 function toLesson(lesson) {
   return {
     id: lesson._id.toString(), sectionId: lesson.sectionId.toString(),
-    title: lesson.title, position: lesson.position, isPreview: lesson.isPreview,
+    title: lesson.title, description: lesson.description ?? '',
+    position: lesson.position, isPreview: lesson.isPreview,
     videoStatus: lesson.videoStatus, durationSeconds: lesson.durationSeconds,
+    attachments: (lesson.attachments ?? []).map(id => id.toString()),
     createdAt: lesson.createdAt, updatedAt: lesson.updatedAt,
   };
 }
@@ -31,11 +34,16 @@ function toSection(section) {
 }
 
 async function ownedCourse(courseId, instructorId, session, { lock = true } = {}) {
-  const filter = { _id: courseId, instructorId, status: 'draft' };
+  const filter = { _id: courseId, instructorId, ...(lock ? { status: 'draft' } : {}) };
   const course = lock
     ? await Course.findOneAndUpdate(filter, { $inc: { curriculumRevision: 1 } }, { session })
     : await Course.findOne(filter).session(session).lean();
-  if (!course) throw notFound();
+  if (!course) {
+    if (lock && await Course.exists({ _id: courseId, instructorId }).session(session)) {
+      throw new ApiError(409, 'INVALID_COURSE_STATE', 'Only draft course content can be edited');
+    }
+    throw notFound();
+  }
 }
 
 async function ownedSection(sectionId, instructorId, session) {
@@ -134,6 +142,7 @@ export function createCurriculumService() {
         const lessons = await Lesson.find({ sectionId })
           .select('+videoUploadId +videoAssetId').session(session).lean();
         await enqueueVideoCleanup(lessons, session);
+        await enqueueAttachmentCleanup(lessons, session);
         await Lesson.deleteMany({ sectionId }, { session });
         await compact(Section, { courseId }, session);
         return { deletedId: sectionId };
@@ -169,6 +178,7 @@ export function createCurriculumService() {
       return transaction(async session => {
         const lesson = await ownedLesson(lessonId, instructorId, session);
         await enqueueVideoCleanup([lesson], session);
+        await enqueueAttachmentCleanup([lesson], session);
         await Lesson.deleteOne({ _id: lessonId }, { session });
         await compact(Lesson, { sectionId: lesson.sectionId }, session);
         return { deletedId: lessonId };

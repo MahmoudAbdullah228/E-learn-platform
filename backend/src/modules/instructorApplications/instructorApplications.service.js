@@ -20,6 +20,7 @@ function toApplication(application) {
     userId: (user?._id ?? user).toString(),
     bio: source.bio,
     expertise: source.expertise,
+    links: (source.links ?? []).map(link => ({ label: link.label, url: link.url })),
     status: source.status,
     reviewedBy: source.reviewedBy?.toString() ?? null,
     rejectionReason: source.rejectionReason ?? null,
@@ -53,7 +54,7 @@ export function createInstructorApplicationsService({
   clock = () => new Date(),
 } = {}) {
   return Object.freeze({
-    async createApplication({ userId, bio, expertise }) {
+    async createApplication({ userId, bio, expertise, links }) {
       return runInTransaction(async session => {
         const updateResult = await User.updateOne(
           {
@@ -78,7 +79,7 @@ export function createInstructorApplicationsService({
         }
 
         const [application] = await InstructorApplication.create(
-          [{ userId, bio, expertise, status: 'pending' }],
+          [{ userId, bio, expertise, links, status: 'pending' }],
           transactionOptions(session),
         );
         return toApplication(application);
@@ -160,6 +161,7 @@ export function createInstructorApplicationsService({
                 instructorProfile: {
                   bio: application.bio,
                   expertise: application.expertise,
+                  links: application.links ?? [],
                 },
               },
               $addToSet: { roles: 'instructor' },

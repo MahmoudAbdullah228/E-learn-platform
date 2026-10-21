@@ -109,6 +109,17 @@ test('oversized JSON returns 413 with the standard error envelope', async () => 
   });
 });
 
+test('oversized raw webhook bodies are rejected before signature processing', async () => {
+  const response = await request(app)
+    .post('/api/v1/webhooks/video')
+    .set('Content-Type', 'application/json')
+    .send(Buffer.alloc(1024 * 1024 + 1, 97))
+    .expect(413);
+
+  assert.equal(response.body.error.code, 'PAYLOAD_TOO_LARGE');
+  assert.equal(JSON.stringify(response.body).includes('stack'), false);
+});
+
 test('request logging excludes query values and headers', () => {
   const serialized = serializeRequest({
     id: 7,

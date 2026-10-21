@@ -10,6 +10,15 @@ const optionalSecret = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const optionalUploadPreset = z.preprocess(
+  value => typeof value === 'string' && value.trim() === '' ? undefined : value,
+  z.string().trim().min(1).max(255).regex(/^[a-zA-Z0-9_-]+$/,
+    'Upload preset must be a preset name, not a URL or credentials').optional(),
+);
+
+const rateLimitMaximum = defaultValue => z.coerce.number().int().min(1).default(defaultValue);
+const rateLimitWindow = z.coerce.number().int().min(1000).max(86_400_000).default(60_000);
+
 const environmentSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -66,11 +75,35 @@ const environmentSchema = z
     MUX_TOKEN_ID: optionalTrimmedString,
     MUX_TOKEN_SECRET: optionalSecret,
     MUX_WEBHOOK_SECRET: optionalSecret,
+    MUX_SIGNING_KEY_ID: optionalTrimmedString,
+    MUX_SIGNING_PRIVATE_KEY: optionalSecret,
+    MUX_PLAYBACK_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(900),
     MUX_UPLOAD_CORS_ORIGIN: optionalTrimmedString,
     MUX_UPLOAD_TIMEOUT_SECONDS: z.coerce.number().int().min(60).max(604_800).default(3600),
     MUX_VIDEO_QUALITY: z.enum(['basic', 'plus', 'premium']).default('basic'),
     MUX_TEST_MODE: z.enum(['true', 'false']).default('true')
       .transform(value => value === 'true'),
+    CLOUDINARY_CLOUD_NAME: optionalTrimmedString,
+    CLOUDINARY_API_KEY: optionalTrimmedString,
+    CLOUDINARY_API_SECRET: optionalSecret,
+    CLOUDINARY_IMAGE_UPLOAD_PRESET: optionalUploadPreset,
+    CLOUDINARY_ATTACHMENT_UPLOAD_PRESET: optionalUploadPreset,
+    CLOUDINARY_UPLOAD_INTENT_TTL_SECONDS: z.coerce.number().int().min(60).max(3600)
+      .default(600),
+    CLOUDINARY_DOWNLOAD_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(60)
+      .default(60),
+    CLOUDINARY_MAX_IMAGE_BYTES: z.coerce.number().int().min(1).max(20 * 1024 * 1024)
+      .default(5 * 1024 * 1024),
+    CLOUDINARY_MAX_ATTACHMENT_BYTES: z.coerce.number().int().min(1).max(100 * 1024 * 1024)
+      .default(20 * 1024 * 1024),
+    STRIPE_SECRET_KEY: optionalSecret,
+    STRIPE_WEBHOOK_SECRET: optionalSecret,
+    STRIPE_CHECKOUT_SUCCESS_URL: optionalTrimmedString,
+    STRIPE_CHECKOUT_CANCEL_URL: optionalTrimmedString,
+    STRIPE_CHECKOUT_EXPIRES_SECONDS: z.coerce.number().int().min(1800).max(86_400)
+      .default(1800),
+    STRIPE_WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().min(60).max(600).default(300),
+    STRIPE_API_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(10_000),
     REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
@@ -80,6 +113,30 @@ const environmentSchema = z
     LOGOUT_ALL_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     FORGOT_PASSWORD_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     RESET_PASSWORD_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    CHECKOUT_RATE_LIMIT_MAX: rateLimitMaximum(5),
+    CHECKOUT_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    MEDIA_INTENT_RATE_LIMIT_MAX: rateLimitMaximum(10),
+    MEDIA_INTENT_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    MEDIA_ACTION_RATE_LIMIT_MAX: rateLimitMaximum(30),
+    MEDIA_ACTION_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    ENROLL_RATE_LIMIT_MAX: rateLimitMaximum(10),
+    ENROLL_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    COURSE_REVIEW_RATE_LIMIT_MAX: rateLimitMaximum(10),
+    COURSE_REVIEW_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    INSTRUCTOR_PROFILE_RATE_LIMIT_MAX: rateLimitMaximum(10),
+    INSTRUCTOR_PROFILE_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    ADMIN_WRITE_RATE_LIMIT_MAX: rateLimitMaximum(30),
+    ADMIN_WRITE_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    LEARNING_ACCESS_RATE_LIMIT_MAX: rateLimitMaximum(30),
+    LEARNING_ACCESS_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    PREVIEW_RATE_LIMIT_MAX: rateLimitMaximum(20),
+    PREVIEW_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    LEARNING_PROGRESS_RATE_LIMIT_MAX: rateLimitMaximum(60),
+    LEARNING_PROGRESS_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    PRIVATE_READ_RATE_LIMIT_MAX: rateLimitMaximum(120),
+    PRIVATE_READ_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
+    CATALOG_RATE_LIMIT_MAX: rateLimitMaximum(120),
+    CATALOG_RATE_LIMIT_WINDOW_MS: rateLimitWindow,
     AUTH_RATE_LIMIT_WINDOW_MS: z.coerce
       .number()
       .int()
@@ -155,6 +212,60 @@ const environmentSchema = z
       });
     }
 
+    const muxSigningConfiguration = [
+      values.MUX_SIGNING_KEY_ID, values.MUX_SIGNING_PRIVATE_KEY,
+    ];
+    if (muxSigningConfiguration.some(Boolean) && !muxSigningConfiguration.every(Boolean)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['MUX_SIGNING_KEY_ID'],
+        message: 'MUX_SIGNING_KEY_ID and MUX_SIGNING_PRIVATE_KEY must be provided together',
+      });
+    }
+
+    const cloudinaryConfiguration = [
+      values.CLOUDINARY_CLOUD_NAME,
+      values.CLOUDINARY_API_KEY,
+      values.CLOUDINARY_API_SECRET,
+      values.CLOUDINARY_IMAGE_UPLOAD_PRESET,
+      values.CLOUDINARY_ATTACHMENT_UPLOAD_PRESET,
+    ];
+    if (cloudinaryConfiguration.some(Boolean) && !cloudinaryConfiguration.every(Boolean)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CLOUDINARY_CLOUD_NAME'],
+        message: 'Cloudinary credentials and upload presets must be provided together',
+      });
+    }
+
+    const stripeConfiguration = [
+      values.STRIPE_SECRET_KEY,
+      values.STRIPE_WEBHOOK_SECRET,
+      values.STRIPE_CHECKOUT_SUCCESS_URL,
+      values.STRIPE_CHECKOUT_CANCEL_URL,
+    ];
+    if (stripeConfiguration.some(Boolean) && !stripeConfiguration.every(Boolean)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['STRIPE_SECRET_KEY'],
+        message: 'Stripe credentials and checkout URLs must be provided together',
+      });
+    }
+    if (values.STRIPE_SECRET_KEY && !values.STRIPE_SECRET_KEY.startsWith('sk_test_')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['STRIPE_SECRET_KEY'],
+        message: 'STRIPE_SECRET_KEY must be a Stripe Test Mode key',
+      });
+    }
+    if (values.STRIPE_WEBHOOK_SECRET && !values.STRIPE_WEBHOOK_SECRET.startsWith('whsec_')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['STRIPE_WEBHOOK_SECRET'],
+        message: 'STRIPE_WEBHOOK_SECRET must be a Stripe webhook signing secret',
+      });
+    }
+
     if (values.JWT_ACCESS_SECRET === values.REFRESH_TOKEN_PEPPER) {
       context.addIssue({
         code: 'custom',
@@ -168,6 +279,24 @@ const environmentSchema = z
         context.addIssue({
           code: 'custom', path: ['MUX_TOKEN_ID'],
           message: 'Mux credentials are required in production',
+        });
+      }
+      if (!muxSigningConfiguration.every(Boolean)) {
+        context.addIssue({
+          code: 'custom', path: ['MUX_SIGNING_KEY_ID'],
+          message: 'Mux signing credentials are required in production',
+        });
+      }
+      if (!cloudinaryConfiguration.every(Boolean)) {
+        context.addIssue({
+          code: 'custom', path: ['CLOUDINARY_CLOUD_NAME'],
+          message: 'Cloudinary configuration is required in production',
+        });
+      }
+      if (!stripeConfiguration.every(Boolean)) {
+        context.addIssue({
+          code: 'custom', path: ['STRIPE_SECRET_KEY'],
+          message: 'Stripe Test Mode configuration is required in production',
         });
       }
       if (values.MUX_TEST_MODE) {
@@ -262,9 +391,31 @@ for (const [name, url] of [
   }
 }
 
+for (const [name, value] of [
+  ['STRIPE_CHECKOUT_SUCCESS_URL', parsed.STRIPE_CHECKOUT_SUCCESS_URL],
+  ['STRIPE_CHECKOUT_CANCEL_URL', parsed.STRIPE_CHECKOUT_CANCEL_URL],
+]) {
+  if (!value) continue;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`Invalid environment variables:\n${name}: must be a valid URL`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error(
+      `Invalid environment variables:\n${name}: must be an HTTP(S) URL without credentials`,
+    );
+  }
+  if (parsed.NODE_ENV === 'production' && url.protocol !== 'https:') {
+    throw new Error(`Invalid environment variables:\n${name}: HTTPS is required in production`);
+  }
+}
+
 export const env = Object.freeze({
   ...parsed,
   CORS_ORIGINS: corsOrigins,
   MUX_UPLOAD_CORS_ORIGIN: muxUploadOrigin,
+  MUX_SIGNING_PRIVATE_KEY: parsed.MUX_SIGNING_PRIVATE_KEY?.replaceAll('\\n', '\n'),
   DATABASE_URI: parsed.NODE_ENV === 'test' ? parsed.MONGO_TEST_URI : parsed.MONGO_URI,
 });

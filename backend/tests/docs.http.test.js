@@ -22,7 +22,33 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 25);
+  assert.equal(Object.keys(json.body.paths).length, 53);
+  assert.ok(json.body.paths['/users/me/courses/{courseId}/lessons/{lessonId}/progress']?.put);
+  assert.ok(json.body.paths['/users/me/courses/{courseId}/last-lesson']?.put);
+  assert.ok(json.body.paths['/lessons/{lessonId}/playback']?.get);
+  assert.ok(json.body.paths['/lessons/{lessonId}/attachments/{assetId}/download']?.get);
+  for (const [method, path] of [['post', '/courses/{courseId}/enroll'],
+    ['get', '/users/me/courses'], ['get', '/users/me/courses/{courseId}'],
+    ['get', '/users/me/orders'], ['get', '/users/me/orders/{orderId}'],
+    ['get', '/admin/orders'], ['get', '/admin/orders/{orderId}']]) {
+    assert.ok(json.body.paths[path]?.[method], `${method} ${path} is missing`);
+  }
+  assert.ok(json.body.paths['/courses/{courseId}/checkout']?.post);
+  assert.ok(json.body.paths['/webhooks/stripe']?.post);
+  assert.ok(json.body.paths['/courses']?.get);
+  assert.ok(json.body.paths['/courses/{slug}']?.get);
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/submit-review']?.post);
+  assert.ok(json.body.paths['/instructor/courses/{courseId}/reopen']?.post);
+  assert.ok(json.body.paths['/admin/courses']?.get);
+  assert.ok(json.body.paths['/admin/courses/{courseId}']?.get);
+  assert.ok(json.body.paths['/admin/courses/{courseId}/review']?.patch);
+  assert.ok(json.body.paths['/categories']?.get);
+  assert.ok(json.body.paths['/admin/categories']?.get);
+  assert.ok(json.body.paths['/admin/categories']?.post);
+  assert.ok(json.body.paths['/admin/categories/{categoryId}']?.patch);
+  assert.ok(json.body.paths['/media/upload-intents']?.post);
+  assert.ok(json.body.paths['/media/{assetId}/confirm']?.post);
+  assert.ok(json.body.paths['/media/{assetId}']?.delete);
   for (const path of [
     '/auth/login',
     '/auth/refresh',
@@ -35,6 +61,10 @@ test('downloadable contracts match the canonical document and expose only implem
   }
   assert.ok(json.body.paths['/users/me']?.get, 'GET /users/me is missing');
   assert.ok(json.body.paths['/users/me']?.patch, 'PATCH /users/me is missing');
+  assert.ok(json.body.paths['/instructors/{instructorId}']?.get,
+    'GET /instructors/{instructorId} is missing');
+  assert.ok(json.body.paths['/instructor/profile']?.patch,
+    'PATCH /instructor/profile is missing');
   assert.ok(json.body.paths['/instructor-applications']?.post,
     'POST /instructor-applications is missing');
   assert.ok(json.body.paths['/instructor-applications/me']?.get,

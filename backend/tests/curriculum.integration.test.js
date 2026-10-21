@@ -307,6 +307,7 @@ test('curriculum mutations reject non-draft courses without changing children', 
   const response = await auth('post',
     `/api/v1/instructor/courses/${published.id}/sections`, owner.token)
     .send({ title: 'Should not exist' });
-  assert.equal(response.status, 404);
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error.code, 'INVALID_COURSE_STATE');
   assert.equal(await Section.countDocuments(), 0);
 });

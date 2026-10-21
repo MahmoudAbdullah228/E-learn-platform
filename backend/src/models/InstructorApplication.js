@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+import { createInstructorLinksField } from './instructorLinks.schema.js';
+
 const instructorApplicationSchema = new mongoose.Schema(
   {
     userId: {
@@ -22,6 +24,7 @@ const instructorApplicationSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 200,
     },
+    links: createInstructorLinksField(),
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

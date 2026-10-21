@@ -14,6 +14,7 @@ const refreshSessionSchema = new mongoose.Schema(
     tokenVersion: { type: Number, required: true, min: 0 },
     expiresAt: { type: Date, required: true },
     revokedAt: { type: Date, default: null },
+    learningRevision: { type: Number, default: 0, select: false },
     revokedReason: {
       type: String,
       enum: [

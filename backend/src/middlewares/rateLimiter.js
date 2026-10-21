@@ -1,6 +1,7 @@
 import { rateLimit } from 'express-rate-limit';
 
 import { env } from '../config/env.js';
+import { ApiError } from '../utils/ApiError.js';
 
 function createRateLimitHandler(code, message) {
   return function rateLimitHandler(request, response) {
@@ -83,5 +84,42 @@ export function createAuthRateLimiters({ storeFactory } = {}) {
       message: 'Too many sign-out requests. Please try again later',
       store: storeFactory?.('logout-all'),
     }),
+  });
+}
+
+export function createAuthenticatedRateLimiter({ namespace, windowMs, limit, storeFactory }) {
+  const limiter = rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: request => request.auth.userId,
+    handler: createRateLimitHandler(
+      'RATE_LIMITED',
+      'Too many requests. Please try again later',
+    ),
+    store: storeFactory?.(namespace),
+  });
+  return (request, response, next) => limiter(request, response, error => {
+    next(error ? new ApiError(503, 'RATE_LIMIT_UNAVAILABLE',
+      'Request limits are temporarily unavailable. Please try again later') : undefined);
+  });
+}
+
+export function createPublicRateLimiter({ namespace, windowMs, limit, storeFactory }) {
+  const limiter = rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    handler: createRateLimitHandler(
+      'RATE_LIMITED',
+      'Too many requests. Please try again later',
+    ),
+    store: storeFactory?.(namespace),
+  });
+  return (request, response, next) => limiter(request, response, error => {
+    next(error ? new ApiError(503, 'RATE_LIMIT_UNAVAILABLE',
+      'Request limits are temporarily unavailable. Please try again later') : undefined);
   });
 }

@@ -48,7 +48,7 @@ export async function seedCategories(categoryNames = defaultCategoryNames) {
     categoryNames.map((name) =>
       Category.updateOne(
         { slug: createSlug(name) },
-        { $set: { name, isActive: true } },
+        { $setOnInsert: { name, slug: createSlug(name), isActive: true } },
         { upsert: true, runValidators: true },
       ),
     ),

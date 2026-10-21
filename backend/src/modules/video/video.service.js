@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 
 import { env } from '../../config/env.js';
 import { Course } from '../../models/Course.js';
+import { CourseReviewEvent } from '../../models/CourseReviewEvent.js';
 import { Lesson } from '../../models/Lesson.js';
 import { Section } from '../../models/Section.js';
 import { VideoAssetState } from '../../models/VideoAssetState.js';
@@ -32,7 +33,12 @@ async function lockOwnedLesson({ lessonId, instructorId, session }) {
     { $inc: { curriculumRevision: 1 } },
     { session },
   );
-  if (!course) throw notFound();
+  if (!course) {
+    const owned = await Course.exists({ _id: section.courseId, instructorId }).session(session);
+    if (owned) throw new ApiError(409, 'INVALID_COURSE_STATE',
+      'Only draft course videos can be edited');
+    throw notFound();
+  }
   return lesson;
 }
 
@@ -53,7 +59,10 @@ function webhookTransition(event) {
       assetId: event.data.id,
       assetDeleted: true,
       match: attemptId ? {
-        $or: [{ videoAssetId: event.data.id }, { videoUploadAttemptId: attemptId }],
+        $or: [{ videoAssetId: event.data.id }, {
+          videoUploadAttemptId: attemptId,
+          videoStatus: { $in: ['pending', 'processing'] },
+        }],
       } : { videoAssetId: event.data.id },
       from: ['pending', 'processing', 'ready', 'failed'],
       set: {
@@ -118,13 +127,17 @@ function webhookTransition(event) {
   return null;
 }
 
+function changesLesson(lesson, fields) {
+  return Object.entries(fields).some(([field, value]) => (lesson[field] ?? null) !== value);
+}
+
 export function createVideoService({
   videoProvider,
   attemptIdFactory = randomUUID,
   clock = () => new Date(),
   reservationGraceSeconds = 300,
 } = {}) {
-  return Object.freeze({
+  const service = Object.freeze({
     async createUpload({ lessonId, instructorId }) {
       const attemptId = attemptIdFactory();
       const supersededUploadId = await mongoose.connection.transaction(async session => {
@@ -210,7 +223,24 @@ export function createVideoService({
       const event = await videoProvider.unwrapWebhook({ rawBody, headers });
       const transition = webhookTransition(event);
       if (!transition) return { received: true, handled: false };
+      return service.applyProviderTransition(transition);
+    },
+
+    // Internal reconciliation shares the webhook's tombstone/audit transaction, never signature bypass.
+    async markAssetUnavailable(assetId) {
+      return service.applyProviderTransition(webhookTransition({
+        type: 'video.asset.deleted', data: { id: assetId },
+      }));
+    },
+
+    async applyProviderTransition(transition) {
       const handled = await mongoose.connection.transaction(async session => {
+        const match = transition.match ?? { videoUploadAttemptId: transition.attemptId };
+        const target = await Lesson.findOne({ ...match,
+          videoStatus: { $in: transition.from } })
+          .select('sectionId videoStatus durationSeconds +videoAssetId +videoUploadId +videoUploadExpiresAt')
+          .session(session).lean();
+        let fields = transition.set;
         if (transition.assetId) {
           if (transition.assetDeleted) {
             await VideoAssetState.updateOne(
@@ -227,18 +257,30 @@ export function createVideoService({
             const assetState = await VideoAssetState.findById(transition.assetId)
               .session(session).lean();
             if (assetState.deletedAt) {
-              const deletedResult = await Lesson.updateOne(
-                {
-                  videoUploadAttemptId: transition.attemptId,
-                  videoStatus: { $in: transition.from },
-                },
-                { $set: {
-                  videoStatus: 'failed', durationSeconds: 0,
-                  videoUploadId: null, videoAssetId: null, videoUploadExpiresAt: null,
-                } },
-                { runValidators: true, session },
-              );
-              return deletedResult.matchedCount === 1;
+              fields = {
+                videoStatus: 'failed', durationSeconds: 0,
+                videoUploadId: null, videoAssetId: null, videoUploadExpiresAt: null,
+              };
+            }
+          }
+        }
+        if (!target) return false;
+        if (!changesLesson(target, fields)) return true;
+        const section = await Section.findById(target.sectionId).select('courseId')
+          .session(session).lean();
+        if (section) {
+          const course = await Course.findById(section.courseId).select('status').session(session);
+          if (course) {
+            const mustUnpublish = course.status === 'published' && fields.videoStatus === 'failed';
+            const at = clock();
+            await Course.updateOne({ _id: course._id }, {
+              $inc: { curriculumRevision: 1 },
+              ...(mustUnpublish ? { $set: { status: 'unavailable', unavailableAt: at } } : {}),
+            }, { session });
+            if (mustUnpublish) {
+              await CourseReviewEvent.create([{ courseId: course._id, actorId: null,
+                action: 'unpublished', fromStatus: 'published', toStatus: 'unavailable',
+                reason: 'Provider video asset is unavailable', occurredAt: at }], { session });
             }
           }
         }
@@ -247,7 +289,7 @@ export function createVideoService({
             ...(transition.match ?? { videoUploadAttemptId: transition.attemptId }),
             videoStatus: { $in: transition.from },
           },
-          { $set: transition.set },
+          { $set: fields },
           { runValidators: true, session },
         );
         return result.matchedCount === 1;
@@ -255,4 +297,5 @@ export function createVideoService({
       return { received: true, handled };
     },
   });
+  return service;
 }

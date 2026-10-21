@@ -179,7 +179,7 @@ test('production SMTP options enforce TLS and bounded timeouts', () => {
   assert.equal(options.tls.minVersion, 'TLSv1.2');
 });
 
-test('auth routes request isolated shared-store instances by limiter namespace', () => {
+test('limited routes request isolated shared-store instances by limiter namespace', () => {
   const namespaces = [];
 
   createApp({
@@ -200,5 +200,20 @@ test('auth routes request isolated shared-store instances by limiter namespace',
       'reset-password',
       'logout',
       'logout-all',
+      'learning-progress',
+      'private-read',
+      'learning-access',
+      'preview',
+      'media-intent',
+      'media-action',
+      'catalog-categories',
+      'checkout',
+      'enroll',
+      'catalog-courses',
+      'admin-write',
+      'catalog',
+      'instructor-profile',
+      'course-review',
+      'admin-course-review',
     ]);
 });

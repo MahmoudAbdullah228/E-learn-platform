@@ -9,8 +9,22 @@ const adminSeedPath = fileURLToPath(new URL('../scripts/seed-admin.js', import.m
 const productionAuth = {
   JWT_ACCESS_SECRET: 'M8vQ3xL9pR2nK7cD4wF6yH1jT5sZ0aB2',
   REFRESH_TOKEN_PEPPER: 'G4uN8mC1qW6eY9kP3rV7xS2dF5hJ0tL8',
+  MUX_TOKEN_ID: 'mux-token-id',
+  MUX_TOKEN_SECRET: 'mux-token-secret',
+  MUX_WEBHOOK_SECRET: 'mux-webhook-secret',
+  MUX_SIGNING_KEY_ID: 'mux-signing-key-id',
+  MUX_SIGNING_PRIVATE_KEY: 'mux-signing-private-key',
   MUX_UPLOAD_CORS_ORIGIN: 'https://app.example.test',
   MUX_TEST_MODE: 'false',
+  CLOUDINARY_CLOUD_NAME: 'example-cloud',
+  CLOUDINARY_API_KEY: 'cloudinary-api-key',
+  CLOUDINARY_API_SECRET: 'cloudinary-api-secret',
+  CLOUDINARY_IMAGE_UPLOAD_PRESET: 'signed-images',
+  CLOUDINARY_ATTACHMENT_UPLOAD_PRESET: 'signed-attachments',
+  STRIPE_SECRET_KEY: 'sk_test_example',
+  STRIPE_WEBHOOK_SECRET: 'whsec_example',
+  STRIPE_CHECKOUT_SUCCESS_URL: 'https://app.example.test/checkout/success',
+  STRIPE_CHECKOUT_CANCEL_URL: 'https://app.example.test/checkout/cancel',
 };
 
 function importEnvironment(overrides, omittedKeys = []) {
@@ -31,6 +45,14 @@ test('startup fails clearly when MONGO_URI is missing', () => {
 
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /MONGO_URI is required/);
+});
+
+test('protected media lifetimes cannot exceed the Sprint 2 access policy', () => {
+  for (const [key, value] of [['MUX_PLAYBACK_TOKEN_TTL_SECONDS', '901'],
+    ['CLOUDINARY_DOWNLOAD_URL_TTL_SECONDS', '61']]) {
+    const result = importEnvironment({ NODE_ENV: 'test', [key]: value });
+    assert.notEqual(result.status, 0); assert.match(`${result.stdout}${result.stderr}`, new RegExp(key));
+  }
 });
 
 test('test startup requires an isolated database URI', () => {
@@ -203,6 +225,88 @@ test('Mux credentials must be complete and production requires them', () => {
   assert.match(`${production.stdout}${production.stderr}`, /Mux credentials are required/);
 });
 
+test('Mux signing credentials must be complete and production requires them', () => {
+  const partial = importEnvironment({ MUX_SIGNING_KEY_ID: 'only-one-value' }, [
+    'MUX_SIGNING_PRIVATE_KEY',
+  ]);
+  assert.notEqual(partial.status, 0);
+  assert.match(`${partial.stdout}${partial.stderr}`, /must be provided together/);
+
+  const production = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    ...productionAuth,
+  }, ['MUX_SIGNING_KEY_ID', 'MUX_SIGNING_PRIVATE_KEY']);
+  assert.notEqual(production.status, 0);
+  assert.match(`${production.stdout}${production.stderr}`, /Mux signing credentials are required/);
+});
+
+test('Cloudinary preset names reject credential URLs without leaking their values', () => {
+  const credentialUrl = 'cloudinary://test-key:never-log-this-secret@example';
+  for (const name of ['CLOUDINARY_IMAGE_UPLOAD_PRESET', 'CLOUDINARY_ATTACHMENT_UPLOAD_PRESET']) {
+    const result = importEnvironment({ ...productionAuth, [name]: credentialUrl });
+    assert.notEqual(result.status, 0);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(output, /Upload preset must be a preset name/);
+    assert.equal(output.includes('never-log-this-secret'), false);
+  }
+});
+
+test('Cloudinary configuration is all-or-none and required in production', () => {
+  const partial = importEnvironment({ CLOUDINARY_CLOUD_NAME: 'example-cloud' }, [
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+    'CLOUDINARY_IMAGE_UPLOAD_PRESET',
+    'CLOUDINARY_ATTACHMENT_UPLOAD_PRESET',
+  ]);
+  assert.notEqual(partial.status, 0);
+  assert.match(`${partial.stdout}${partial.stderr}`, /Cloudinary credentials and upload presets/);
+
+  const production = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    ...productionAuth,
+  }, [
+    'CLOUDINARY_CLOUD_NAME', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET',
+    'CLOUDINARY_IMAGE_UPLOAD_PRESET', 'CLOUDINARY_ATTACHMENT_UPLOAD_PRESET',
+  ]);
+  assert.notEqual(production.status, 0);
+  assert.match(`${production.stdout}${production.stderr}`, /Cloudinary configuration is required/);
+});
+
+test('Stripe configuration is Test Mode, all-or-none, and HTTPS in production', () => {
+  const liveKey = importEnvironment({ STRIPE_SECRET_KEY: 'sk_live_not-allowed' });
+  assert.notEqual(liveKey.status, 0);
+  assert.match(`${liveKey.stdout}${liveKey.stderr}`, /Stripe Test Mode key/);
+
+  const partial = importEnvironment({ STRIPE_SECRET_KEY: 'sk_test_example' }, [
+    'STRIPE_WEBHOOK_SECRET', 'STRIPE_CHECKOUT_SUCCESS_URL', 'STRIPE_CHECKOUT_CANCEL_URL',
+  ]);
+  assert.notEqual(partial.status, 0);
+  assert.match(`${partial.stdout}${partial.stderr}`, /Stripe credentials and checkout URLs/);
+
+  const insecure = importEnvironment({
+    NODE_ENV: 'production',
+    EMAIL_PROVIDER: 'smtp',
+    EMAIL_FROM: 'no-reply@example.test',
+    EMAIL_VERIFICATION_URL: 'https://app.example.test/verify-email',
+    PASSWORD_RESET_URL: 'https://app.example.test/reset-password',
+    SMTP_HOST: 'smtp.example.test',
+    ...productionAuth,
+    STRIPE_CHECKOUT_SUCCESS_URL: 'http://app.example.test/checkout/success',
+  });
+  assert.notEqual(insecure.status, 0);
+  assert.match(`${insecure.stdout}${insecure.stderr}`, /STRIPE_CHECKOUT_SUCCESS_URL: HTTPS/);
+});
+
 test('production rejects temporary Mux test assets', () => {
   const result = importEnvironment({
     NODE_ENV: 'production',
@@ -244,6 +348,16 @@ test('access tokens are fixed to the accepted 15-minute lifetime', () => {
   const result = importEnvironment({ ACCESS_TOKEN_TTL_SECONDS: '901' });
   assert.notEqual(result.status, 0);
   assert.match(`${result.stdout}${result.stderr}`, /must be 900/);
+});
+
+test('Sprint 2 rate-limit contracts require positive maxima and bounded windows', () => {
+  const maximum = importEnvironment({ CHECKOUT_RATE_LIMIT_MAX: '0' });
+  assert.notEqual(maximum.status, 0);
+  assert.match(`${maximum.stdout}${maximum.stderr}`, /CHECKOUT_RATE_LIMIT_MAX/);
+
+  const window = importEnvironment({ CATALOG_RATE_LIMIT_WINDOW_MS: '999' });
+  assert.notEqual(window.status, 0);
+  assert.match(`${window.stdout}${window.stderr}`, /CATALOG_RATE_LIMIT_WINDOW_MS/);
 });
 
 test('authentication secrets must be independent and production-safe', () => {
