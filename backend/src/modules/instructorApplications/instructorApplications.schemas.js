@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { textSchema } from '../../utils/textValidation.js';
+import { instructorLinksSchema } from '../../utils/instructorLinks.js';
 
 const pageSchema = z.string().regex(/^[1-9]\d*$/).default('1')
   .transform(Number)
@@ -12,6 +13,7 @@ const limitSchema = z.string().regex(/^[1-9]\d*$/).default('20')
 export const createInstructorApplicationSchema = z.object({
   bio: textSchema({ minimum: 50, maximum: 2000, field: 'Bio', multiline: true }),
   expertise: textSchema({ minimum: 2, maximum: 200, field: 'Expertise' }),
+  links: instructorLinksSchema.default([]),
 }).strict();
 
 export const listInstructorApplicationsQuerySchema = z.object({

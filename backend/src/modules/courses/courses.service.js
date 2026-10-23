@@ -5,6 +5,7 @@ import { Category } from '../../models/Category.js';
 import { Course } from '../../models/Course.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { createSlug } from '../../utils/slug.js';
+import { toCourse } from './course.presenter.js';
 
 const SLUG_ATTEMPTS = 8;
 const MAX_SLUG_LENGTH = 220;
@@ -14,7 +15,7 @@ const TRANSACTION_OPTIONS = {
 };
 
 function courseNotFound() {
-  return new ApiError(404, 'COURSE_NOT_FOUND', 'Draft course was not found');
+  return new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
 }
 
 function invalidCategory() {
@@ -29,36 +30,6 @@ function truncateSlug(value, maximumLength) {
   const characters = Array.from(value);
   while (characters.join('').length > maximumLength) characters.pop();
   return characters.join('').replace(/-+$/g, '') || 'course';
-}
-
-function toCategory(category) {
-  if (!category) return null;
-  return {
-    id: category._id.toString(),
-    name: category.name,
-    slug: category.slug,
-    isActive: category.isActive,
-  };
-}
-
-function toCourse(course, category) {
-  const source = course.toObject ? course.toObject() : course;
-  return {
-    id: source._id.toString(),
-    instructorId: source.instructorId.toString(),
-    categoryId: source.categoryId.toString(),
-    category: toCategory(category),
-    title: source.title,
-    slug: source.slug,
-    description: source.description,
-    requirements: source.requirements,
-    learningOutcomes: source.learningOutcomes,
-    priceMinor: source.priceMinor,
-    currency: source.currency,
-    status: source.status,
-    createdAt: source.createdAt,
-    updatedAt: source.updatedAt,
-  };
 }
 
 async function requireActiveCategory(categoryId, session) {
@@ -97,8 +68,8 @@ export function createCoursesService({ slugSuffix = () => randomBytes(4).toStrin
         'A unique course URL could not be allocated; retry the request');
     },
 
-    async listCourses({ instructorId, page, limit }) {
-      const filter = { instructorId, status: 'draft' };
+    async listCourses({ instructorId, status, page, limit }) {
+      const filter = { instructorId, status };
       const [courses, total] = await Promise.all([
         Course.find(filter).sort({ updatedAt: -1, _id: -1 })
           .skip((page - 1) * limit).limit(limit).lean(),
@@ -116,7 +87,7 @@ export function createCoursesService({ slugSuffix = () => randomBytes(4).toStrin
 
     async getCourse({ instructorId, courseId }) {
       const course = await Course.findOne({
-        _id: courseId, instructorId, status: 'draft',
+        _id: courseId, instructorId,
       });
       if (!course) throw courseNotFound();
       const category = await Category.findById(course.categoryId).lean();
@@ -130,7 +101,12 @@ export function createCoursesService({ slugSuffix = () => randomBytes(4).toStrin
           null,
           { session },
         );
-        if (!course) throw courseNotFound();
+        if (!course) {
+          const owned = await Course.exists({ _id: courseId, instructorId }).session(session);
+          if (owned) throw new ApiError(409, 'INVALID_COURSE_STATE',
+            'Only a draft course can be edited');
+          throw courseNotFound();
+        }
 
         const category = await requireActiveCategory(
           input.categoryId ?? course.categoryId,

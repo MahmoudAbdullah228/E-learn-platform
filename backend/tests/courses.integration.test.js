@@ -247,14 +247,17 @@ test('listing is paginated, owner-scoped, draft-only, and resilient to deleted c
     .auth(first.accessToken, { type: 'bearer' }).expect(200);
   assert.equal(defaults.body.data.pagination.page, 1);
   assert.equal(defaults.body.data.pagination.limit, 20);
-  for (const query of ['status=published', 'page=0', 'limit=101', 'page=1&page=2']) {
+  const published = await request(app).get('/api/v1/instructor/courses?status=published')
+    .auth(first.accessToken, { type: 'bearer' }).expect(200);
+  assert.equal(published.body.data.pagination.total, 1);
+  for (const query of ['status=invalid', 'page=0', 'limit=101', 'page=1&page=2']) {
     const invalid = await request(app).get(`/api/v1/instructor/courses?${query}`)
       .auth(first.accessToken, { type: 'bearer' });
     assert.equal(invalid.status, 400);
   }
 });
 
-test('course reads enforce ownership and draft status without exposing other courses', async () => {
+test('course reads enforce ownership and expose the current owned state', async () => {
   const owner = await authenticatedUser({ email: 'read-owner@example.com' });
   const outsider = await authenticatedUser({ email: 'read-outsider@example.com' });
   const activeCategory = await category();
@@ -272,8 +275,9 @@ test('course reads enforce ownership and draft status without exposing other cou
   assert.equal(malformed.status, 400);
 
   await Course.updateOne({ _id: courseId }, { $set: { status: 'published' } });
-  await request(app).get(`/api/v1/instructor/courses/${courseId}`)
-    .auth(owner.accessToken, { type: 'bearer' }).expect(404);
+  const published = await request(app).get(`/api/v1/instructor/courses/${courseId}`)
+    .auth(owner.accessToken, { type: 'bearer' }).expect(200);
+  assert.equal(published.body.data.course.status, 'published');
 });
 
 test('partial updates preserve slug and protected fields while validating category and ownership', async () => {

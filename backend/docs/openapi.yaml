@@ -1,12 +1,26 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 0.9.0
+  version: 1.0.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
     instructor applications with administrative review, draft courses, ordered curricula,
-    and secure Mux direct-video uploads with signed webhook processing.
+    secure Mux direct-video uploads with signed webhook processing, and Sprint 2 content
+    fields, reviewed instructor links, and public instructor profiles.
+    S2-03 adds signed Cloudinary upload intents, provider-verified confirmation,
+    and asynchronous media deletion for avatars, draft covers, and one lesson PDF.
+    S2-04 adds public active-category discovery and admin create, edit, archive,
+    and reactivate operations. Archived categories keep existing course references.
+    S2-05 adds course submission, administrative review and publication with
+    readiness checks, rejection reasons, and audit events.
+    S2-06 adds public published-course catalog and details with prefix title search.
+    S2-07 adds Stripe Test Checkout with immutable financial snapshots.
+    S2-08 adds a signed durable payment inbox and atomic payment/enrollment/earnings fulfillment.
+    S2-09 adds free enrollment, the owner's library/learning outline, owner-only order polling,
+    and admin order reads. S2-10 adds authorized signed video playback and temporary private PDF downloads.
+    S2-11 adds enrollment-bound lesson completion/resume and dynamic progress reads.
+    Refunds and payouts remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -29,13 +43,566 @@ tags:
     description: Authenticated user profile
   - name: Instructor applications
     description: Student applications and administrative review
-  - name: Draft courses
-    description: Instructor-owned draft course management
+  - name: Instructors
+    description: Public approved-instructor profiles and owner-managed profile details
+  - name: Instructor courses
+    description: Instructor-owned course creation, reads, and draft editing
+  - name: Course review
+    description: Instructor submissions and administrative publication decisions
+  - name: Catalog
+    description: Public published-course discovery and safe curriculum summaries
+  - name: Checkout
+    description: Stripe Test hosted checkout and durable verified payment fulfillment
+  - name: Learning library
+    description: Free enrollment, student-owned learning outlines and dynamic progress reads
+  - name: Learning access
+    description: Signed video playback and authorized temporary PDF downloads
+  - name: Learning progress
+    description: Enrollment-bound lesson completion and resume position
+  - name: Orders
+    description: Read-only student order history/polling and administrator financial snapshots
   - name: Curriculum
     description: Ordered sections and lessons belonging to instructor-owned draft courses
   - name: Video
     description: Mux Direct Upload creation and signed asynchronous lifecycle events
+  - name: Media
+    description: Cloudinary direct uploads, confirmation, and deletion
+  - name: Categories
+    description: Public category discovery and administrative category management
 paths:
+  /users/me/courses/{courseId}/lessons/{lessonId}/progress:
+    put:
+      operationId: setLessonCompletion
+      tags: [Learning progress]
+      summary: Set or clear completion of an enrolled course lesson
+      description: |
+        Requires a current verified active student session and active enrollment in a published
+        course. Preview/owner/admin review access grants no progress-write exemption.
+        completed must be a real boolean; no query parameters are accepted. Repeated true
+        preserves the original completion timestamp; false clears it. Resume position is
+        updated only by the separate last-lesson endpoint. Progress is self-reported, not
+        server proof of viewing video. The course percentage uses its current existing lessons,
+        excludes orphan/foreign progress, and floors to two decimals (zero lessons is 0%).
+        Completion/resume share a user-wide quota of 60/min across all courses/lessons.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CourseId' }
+        - { $ref: '#/components/parameters/LessonId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [completed]
+              properties:
+                completed: { type: boolean }
+      responses:
+        '200':
+          description: Current lesson and course progress saved atomically
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgressResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /users/me/courses/{courseId}/last-lesson:
+    put:
+      operationId: setLastLearningLesson
+      tags: [Learning progress]
+      summary: Save the enrolled student's resume lesson
+      description: |
+        Requires a verified active student, live session, active enrollment and published
+        course. The lesson must still exist in this exact course. No query parameters or
+        client-selected enrollment/student/timestamps are accepted. Repeated requests are
+        idempotent. Saving resume position never marks a lesson completed.
+        Shares the user-wide completion/resume quota (60/min default), separate from private reads.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [lessonId]
+              properties:
+                lessonId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '200':
+          description: Resume position saved without altering lesson completion
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LastLessonResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /lessons/{lessonId}/playback:
+    get:
+      operationId: getLessonPlayback
+      tags: [Learning access]
+      summary: Issue a short-lived signed Mux playback token
+      description: |
+        A published preview lesson allows anonymous video playback, never PDF downloads.
+        Other published lessons require an active student enrollment. An active approved
+        course owner or administrator may review unpublished content without enrollment.
+        A supplied invalid Authorization header always returns 401 (no anonymous fallback).
+        Tokens expire after at most 900 seconds; renew through this endpoint. Revocation
+        prevents new issuance, not the use of a token already issued until its expiry.
+        Learning requests share a user-wide quota of 30/min; anonymous previews use 20/min
+        per normalized IP. 503 PLAYBACK_PREPARING is retryable with bounded backoff.
+        No query parameters are accepted. Tokens must not be logged or persisted as permanent URLs.
+      security: [{}, { bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/LessonId' }]
+      responses:
+        '200':
+          description: Signed playback available
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /lessons/{lessonId}/attachments/{assetId}/download:
+    get:
+      operationId: getLessonAttachmentDownload
+      tags: [Learning access]
+      summary: Issue a temporary authenticated PDF download URL
+      description: |
+        Requires an active student enrollment in a published course, or the active approved
+        course owner/administrator reviewing its content. Preview flags never grant PDF access.
+        The attachment must be ready, authenticated, owned by the course instructor and attached
+        to this exact lesson. assetId is a MediaAsset ID, not a provider ID; obtain it from the
+        authenticated learning outline. No query parameters are accepted.
+        URLs expire after at most 60 seconds. Request a new URL on expiry; never store one permanently.
+        Bearer URLs remain usable until expiry after enrollment/session/account revocation.
+        Download and playback requests share the same authenticated user quota (30/min).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/LessonId' }
+        - name: assetId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '200':
+          description: Temporary download available
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /courses/{courseId}/checkout:
+    post:
+      operationId: checkoutCourse
+      summary: Create or resume Stripe Test checkout for a published paid course
+      description: |
+        Requires an active verified student. Owners cannot buy their own courses.
+        Do not send price, commission, provider IDs, or return URLs. Repeated requests
+        reuse the same server-owned order and Checkout session. A 409 PAYMENT_PENDING
+        means an attempt is being prepared or awaiting payment confirmation.
+        Retry a 503 with the same course, not a new key. PAYMENT_RECONCILIATION_REQUIRED
+        preserves the purchase slot until the previous attempt is resolved.
+        Stripe-confirmed unpaid expiration or a definitive amount validation rejection
+        before allocation allows replacement. Cancel/success
+        redirects do not change payment state. Only the durable verified Stripe event worker
+        can confirm payment, enroll the buyer, and record pending instructor earnings.
+      tags: [Checkout]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '201':
+          description: New order and hosted checkout
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutResponse' }
+        '200':
+          description: Resumed existing order and checkout
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CheckoutResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /courses:
+    get:
+      operationId: listPublishedCourses
+      summary: Browse published courses
+      description: |
+        Title search is normalized Arabic/English prefix matching, not full-text or fuzzy search.
+        Archived categories do not hide already published courses. Draft, pending, rejected,
+        and provider-unavailable courses are excluded.
+      tags: [Catalog]
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - in: query
+          name: categoryId
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+        - in: query
+          name: pricing
+          schema: { type: string, enum: [all, free, paid], default: all }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Published courses ordered by publication date and ID, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CatalogListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /courses/{slug}:
+    get:
+      operationId: getPublishedCourseBySlug
+      summary: Read published course details and public curriculum
+      tags: [Catalog]
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 220 }
+      responses:
+        '200':
+          description: Public course details without media credentials or private attachments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CatalogDetailsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /instructor/courses/{courseId}/submit-review:
+    post:
+      operationId: submitCourseForReview
+      summary: Submit a complete owned draft for administrative review
+      tags: [Course review]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      responses:
+        '200':
+          description: Course moved to pending_review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CourseResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /instructor/courses/{courseId}/reopen:
+    post:
+      operationId: reopenCourseForRepair
+      summary: Reopen an owned rejected or provider-unavailable course as a draft
+      tags: [Course review]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      responses:
+        '200':
+          description: Course returned to draft; audit history remains
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CourseResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /admin/courses:
+    get:
+      operationId: listCoursesForReview
+      summary: List courses for administrative review
+      tags: [Course review]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [draft, pending_review, published, rejected, unavailable], default: pending_review }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Paginated courses ordered by submission time and ID
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CourseListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+  /admin/courses/{courseId}:
+    get:
+      operationId: getCourseForReview
+      summary: Read course content and review history as an admin
+      tags: [Course review]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      responses:
+        '200':
+          description: Review details without private video provider identifiers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminCourseDetailsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+  /admin/courses/{courseId}/review:
+    patch:
+      operationId: reviewCourse
+      summary: Approve and publish, or reject, a pending course
+      description: |
+        Approval atomically rechecks that the instructor is active, approved, and still
+        has the instructor role. If eligibility changed after submission, returns
+        403 INSTRUCTOR_NOT_APPROVED without publishing or recording an approval.
+        An admin can still reject the submission with a reason.
+      tags: [Course review]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CourseReviewDecision' }
+      responses:
+        '200':
+          description: Reviewed course with persisted decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CourseResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /categories:
+    get:
+      operationId: listPublicCategories
+      summary: List active categories
+      tags: [Categories]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Active categories in name and ID order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /admin/categories:
+    get:
+      operationId: listAdminCategories
+      summary: List categories including archived ones
+      tags: [Categories]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: isActive
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Categories in name and ID order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+    post:
+      operationId: createCategory
+      summary: Create a category with a unique normalized slug
+      tags: [Categories]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCategoryInput' }
+      responses:
+        '201':
+          description: Category created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /admin/categories/{categoryId}:
+    patch:
+      operationId: updateCategory
+      summary: Edit, archive, or reactivate a category without deleting references
+      tags: [Categories]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: categoryId
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCategoryInput' }
+      responses:
+        '200':
+          description: Category updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CategoryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /media/upload-intents:
+    post:
+      operationId: createMediaUploadIntent
+      summary: Create a signed Cloudinary upload intent for an owned target
+      tags: [Media]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [purpose, targetId]
+              properties:
+                purpose: { type: string, enum: [avatar, course_cover, lesson_attachment] }
+                targetId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '201':
+          description: Signed upload parameters and pending asset ID; upload bytes directly to Cloudinary. The app confirmation deadline is expiresAt; the provider signature may remain valid until providerUploadValidUntil, so canceled/expired uploads are cleaned later.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [assetId, upload, maxBytes]
+                    properties:
+                      assetId: { type: string }
+                      upload:
+                        type: object
+                        required: [uploadUrl, apiKey, signature, parameters, resourceType, deliveryType, expiresAt, providerUploadValidUntil]
+                        properties:
+                          uploadUrl: { type: string, format: uri }
+                          apiKey: { type: string }
+                          signature: { type: string }
+                          parameters: { type: object, additionalProperties: true }
+                          resourceType: { type: string }
+                          deliveryType: { type: string }
+                          expiresAt: { type: string, format: date-time }
+                          providerUploadValidUntil: { type: string, format: date-time }
+                      maxBytes: { type: integer }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /media/{assetId}/confirm:
+    post:
+      operationId: confirmMediaUpload
+      summary: Verify uploaded metadata at Cloudinary and attach media atomically
+      tags: [Media]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '200':
+          description: Verified asset attached to its original target
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      asset: { $ref: '#/components/schemas/MediaAsset' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /media/{assetId}:
+    delete:
+      operationId: deleteMediaAsset
+      summary: Detach an owned asset and queue provider cleanup
+      tags: [Media]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '204': { description: Asset detached and deletion queued }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
   /health:
     get:
       operationId: getHealth
@@ -333,6 +900,69 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+  /instructors/{instructorId}:
+    get:
+      operationId: getPublicInstructorProfile
+      summary: Return one active approved instructor's public profile
+      tags: [Instructors]
+      parameters:
+        - name: instructorId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-fA-F0-9]{24}$'
+      responses:
+        '200':
+          description: Public instructor profile without account or security fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorProfileResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+  /instructor/profile:
+    patch:
+      operationId: updateInstructorProfile
+      summary: Partially update the authenticated approved instructor's public profile
+      description: Omitting links preserves them; an empty links array clears them; sending links replaces the full list. The historical application is never changed.
+      tags: [Instructors]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstructorProfileRequest'
+      responses:
+        '200':
+          description: Instructor profile updated
+          headers:
+            Cache-Control:
+              description: Prevents storage of the authenticated mutation response
+              schema:
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstructorProfileResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
   /instructor-applications:
     post:
       operationId: createInstructorApplication
@@ -481,9 +1111,9 @@ paths:
   /instructor/courses:
     get:
       operationId: listInstructorDraftCourses
-      summary: List the authenticated instructor's draft courses
+      summary: List the authenticated instructor's courses by status
       description: Results are ordered by most recently updated and never include another instructor's courses.
-      tags: [Draft courses]
+      tags: [Instructor courses]
       security:
         - bearerAuth: []
       parameters:
@@ -491,7 +1121,8 @@ paths:
           in: query
           required: false
           schema:
-            const: draft
+            type: string
+            enum: [draft, pending_review, published, rejected, unavailable]
             default: draft
         - name: page
           in: query
@@ -511,7 +1142,7 @@ paths:
             default: 20
       responses:
         '200':
-          description: Paginated owned draft courses
+          description: Paginated owned courses in the requested state
           headers:
             Cache-Control:
               description: Prevents storage of instructor course data
@@ -531,7 +1162,7 @@ paths:
       operationId: createInstructorDraftCourse
       summary: Create a draft course
       description: The category must be active. The API allocates a globally unique slug; clients cannot set it.
-      tags: [Draft courses]
+      tags: [Instructor courses]
       security:
         - bearerAuth: []
       requestBody:
@@ -569,15 +1200,15 @@ paths:
           type: string
           pattern: '^[a-fA-F0-9]{24}$'
     get:
-      operationId: getInstructorDraftCourse
-      summary: Return one owned draft course
-      description: A missing, non-draft, or differently owned course returns the same 404 response.
-      tags: [Draft courses]
+      operationId: getInstructorCourse
+      summary: Return one owned course in any state
+      description: Missing or differently owned courses return 404. Pending, published, and rejected courses remain readable but cannot be edited.
+      tags: [Instructor courses]
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Owned draft course
+          description: Owned course and current review decision
           headers:
             Cache-Control:
               description: Prevents storage of instructor course data
@@ -599,7 +1230,7 @@ paths:
       operationId: updateInstructorDraftCourse
       summary: Partially update one owned draft course
       description: At least one editable field is required. Slugs remain stable when titles change. Ownership, slug, status, and coverKey cannot be changed here.
-      tags: [Draft courses]
+      tags: [Instructor courses]
       security:
         - bearerAuth: []
       requestBody:
@@ -628,18 +1259,20 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
   /instructor/courses/{courseId}/sections:
     parameters:
       - $ref: '#/components/parameters/CourseId'
     get:
-      operationId: listDraftCourseCurriculum
+      operationId: listOwnedCourseCurriculum
       summary: List ordered sections and their ordered lessons
       tags: [Curriculum]
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Owned draft course curriculum
+          description: Owned course curriculum, including read-only review and published states
           content:
             application/json:
               schema:
@@ -745,6 +1378,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
     delete:
       operationId: deleteDraftCourseSection
       summary: Delete a section and all of its lessons atomically
@@ -766,6 +1401,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
   /instructor/sections/{sectionId}/lessons:
     parameters:
       - $ref: '#/components/parameters/SectionId'
@@ -861,6 +1498,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
     delete:
       operationId: deleteDraftCourseLesson
       summary: Delete a lesson and compact sibling positions
@@ -882,6 +1521,8 @@ paths:
           $ref: '#/components/responses/ForbiddenError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
   /instructor/lessons/{lessonId}/video-upload:
     parameters:
       - $ref: '#/components/parameters/LessonId'
@@ -953,8 +1594,300 @@ paths:
           $ref: '#/components/responses/PayloadTooLargeError'
         '503':
           $ref: '#/components/responses/ServiceUnavailableError'
+  /webhooks/stripe:
+    post:
+      operationId: receiveStripeWebhook
+      tags: [Checkout]
+      summary: Receive a signed Stripe Test Mode event (provider only)
+      description: |
+        Send the original uncompressed JSON bytes, at most 1 MiB, with Stripe-Signature.
+        No JWT or browser/user rate limiter. Test Mode, platform-account snapshot events only.
+        Supported types are checkout.session.completed, checkout.session.async_payment_succeeded,
+        checkout.session.async_payment_failed, and checkout.session.expired.
+        Unsupported valid events are retained as ignored with no financial effects.
+        HTTP 200 acknowledges durable receipt, NOT fulfillment. Duplicates never reopen
+        processed/failed events. A worker validates current provider evidence and atomically
+        confirms Order/Payment, Enrollment, pending EarningEntry, and the event itself.
+        Never call this endpoint from the frontend or treat a redirect as payment proof.
+      security: []
+      parameters:
+        - in: header
+          name: Stripe-Signature
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, type, livemode, created, data]
+              properties:
+                id: { type: string, pattern: '^evt_', maxLength: 255 }
+                type: { type: string, maxLength: 255 }
+                livemode: { const: false }
+                created: { type: integer, minimum: 1 }
+                data:
+                  type: object
+                  required: [object]
+                  properties:
+                    object: { type: object }
+      responses:
+        '200':
+          description: Verified event durably stored or already present; processing is asynchronous
+          headers:
+            Cache-Control:
+              schema: { const: no-store }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [received]
+                    properties:
+                      received: { const: true }
+        '400':
+          description: INVALID_PAYMENT_WEBHOOK_SIGNATURE or INVALID_PAYMENT_EVENT; not stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: PAYMENT_EVENT_CONFLICT; inconsistent existing event identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: PAYLOAD_TOO_LARGE; body exceeds 1 MiB
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '415':
+          description: UNSUPPORTED_CONTENT_ENCODING; compressed bodies are not supported
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '500':
+          description: Durable persistence failed; Stripe must retry delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /courses/{courseId}/enroll:
+    post:
+      operationId: enrollFreeCourse
+      tags: [Learning library]
+      summary: Enroll in a published free course
+      description: |
+        Active verified student, not the course owner. Send no body or an empty object.
+        Creates one active Enrollment with null sourceOrderId, and no financial records or provider calls.
+        Existing active access returns 200 unchanged, including after a later price change.
+        Revoked access returns ENROLLMENT_REVOKED; it is never silently restored.
+        PAID_COURSE_REQUIRES_CHECKOUT and PAYMENT_PENDING are 409 conflicts.
+        Quota is ENROLL_RATE_LIMIT_MAX (default 10 per minute), per user across all courses.
+        All responses, including errors, use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '201':
+          description: New free enrollment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentResponse' }
+        '200':
+          description: Already active; same enrollment unchanged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnrollmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /users/me/courses:
+    get:
+      operationId: listMyLibrary
+      tags: [Learning library]
+      summary: List the authenticated student's enrollments
+      description: |
+        Snapshot-consistent pagination, ordered enrolledAt descending then ID descending.
+        Only the current user's records. A nonpublished/deleted course remains a historical
+        enrollment with course null and available false, without leaking draft content.
+        Each available active enrollment has dynamic current-curriculum progress;
+        unavailable/revoked entries have progress null. Zero lessons means zero percent.
+        All private reads share PRIVATE_READ_RATE_LIMIT_MAX (default 120 per minute) per user.
+        Cache-Control no-store applies to successes and errors.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - in: query
+          name: status
+          schema: { type: string, enum: [active, revoked, all], default: active }
+      responses:
+        '200':
+          description: Student library; unavailable entries have no course metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /users/me/courses/{courseId}:
+    get:
+      operationId: getMyLearningCourse
+      tags: [Learning library]
+      summary: Read the enrolled student's published learning outline
+      description: |
+        Active own enrollment required; missing/revoked/non-owned enrollment returns 404.
+        An unavailable/nonpublished/deleted course returns 409 COURSE_UNAVAILABLE.
+        Returns ordered sections/lesson descriptions, media readiness, ready PDF database IDs,
+        per-lesson completion and dynamic course progress. Never returns provider IDs,
+        playback tokens or private URLs. Invalid/deleted/foreign lastLessonId becomes null.
+        Protected playback/downloads use the separate S2-10 endpoints.
+        Shared private-read quota and Cache-Control no-store apply.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      responses:
+        '200':
+          description: Snapshot-consistent learning outline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LearningCourseResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /users/me/orders:
+    get:
+      operationId: listMyOrders
+      tags: [Orders]
+      summary: Read the current student's order history
+      description: Immutable title/price snapshots, newest first; shared private-read quota and no-store. Read-only, never calls Stripe or fulfills payments.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/OrderStatus' }
+      responses:
+        '200':
+          description: Paginated own order history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /users/me/orders/{orderId}:
+    get:
+      operationId: getMyOrder
+      tags: [Orders]
+      summary: Poll one owned order and its safe payment status
+      description: |
+        Non-owned/missing order returns the same 404. Order and Payment are read in one snapshot.
+        No provider IDs, checkout URLs, email, keys, leases, or financial split are exposed.
+        Poll every 5 seconds, back off to 30 seconds and stop after two minutes; then allow manual refresh.
+        A timeout does not mean failure and must not start a new checkout. Only the event worker fulfills.
+        Shared private-read quota and Cache-Control no-store apply.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      responses:
+        '200':
+          description: Current persisted status only; no side effects
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderDetailsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/orders:
+    get:
+      operationId: listAdminOrders
+      tags: [Orders]
+      summary: Read order snapshots as administrator
+      description: Admin only, newest first, no financial mutations. Shared private-read quota and no-store.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/OrderStatus' }
+        - in: query
+          name: studentId
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+        - in: query
+          name: courseId
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '200':
+          description: Filtered financial snapshots for administrative review
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/orders/{orderId}:
+    get:
+      operationId: getAdminOrder
+      tags: [Orders]
+      summary: Read one order and safe payment details as administrator
+      description: Admin only; no provider references, customer email, keys or leases. Shared private-read quota and no-store.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      responses:
+        '200':
+          description: Financial split snapshot and safe payment status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminOrderDetailsResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
 components:
   parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+    OrderStatus:
+      name: status
+      in: query
+      schema: { type: string, enum: [pending, paid, failed, cancelled, refunded] }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000000, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
     CourseId:
       name: courseId
       in: path
@@ -999,7 +1932,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     RateLimitError:
-      description: Too many requests from the client IP
+      description: Too many requests for the applicable client or authenticated-user quota
       headers:
         Retry-After:
           description: Seconds to wait before retrying
@@ -1061,6 +1994,584 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    ProgressSummary:
+      type: object
+      additionalProperties: false
+      required: [totalLessons, completedLessons, percentage, completedAt]
+      properties:
+        totalLessons: { type: integer, minimum: 0 }
+        completedLessons: { type: integer, minimum: 0 }
+        percentage: { type: number, minimum: 0, maximum: 100 }
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Latest relevant lesson completion date only when the nonempty current curriculum is complete
+    LessonCompletion:
+      type: object
+      additionalProperties: false
+      required: [lessonId, completed, completedAt]
+      properties:
+        lessonId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        completed: { type: boolean }
+        completedAt: { type: [string, 'null'], format: date-time }
+    ProgressResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [enrollment, progress, lessonProgress]
+          properties:
+            enrollment: { $ref: '#/components/schemas/Enrollment' }
+            progress: { $ref: '#/components/schemas/ProgressSummary' }
+            lessonProgress: { $ref: '#/components/schemas/LessonCompletion' }
+    LastLessonResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [enrollment, progress]
+          properties:
+            enrollment: { $ref: '#/components/schemas/Enrollment' }
+            progress: { $ref: '#/components/schemas/ProgressSummary' }
+    PlaybackResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [playbackId, token, expiresAt]
+          properties:
+            playbackId: { type: string }
+            token: { type: string }
+            expiresAt: { type: string, format: date-time }
+    PrivateDownloadResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [url, expiresAt]
+          properties:
+            url: { type: string, format: uri }
+            expiresAt: { type: string, format: date-time }
+    Enrollment:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, sourceOrderId, status, enrolledAt, completedAt, revokedAt, lastLessonId]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        sourceOrderId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        status: { type: string, enum: [active, revoked] }
+        enrolledAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time }
+        lastLessonId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+    EnrollmentResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [enrollment]
+          properties:
+            enrollment: { $ref: '#/components/schemas/Enrollment' }
+    LibraryCourse:
+      type: object
+      required: [id, slug, title, shortDescription, level, language, coverUrl]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        shortDescription: { type: string }
+        level: { type: [string, 'null'], enum: [beginner, intermediate, advanced, all_levels, null] }
+        language: { type: [string, 'null'], enum: [ar, en, null] }
+        coverUrl: { type: [string, 'null'], format: uri }
+    LibraryResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [courses, pagination]
+          properties:
+            pagination: { $ref: '#/components/schemas/Pagination' }
+            courses:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [enrollment, course, available, progress]
+                properties:
+                  progress:
+                    oneOf: [{ $ref: '#/components/schemas/ProgressSummary' }, { type: 'null' }]
+                  enrollment: { $ref: '#/components/schemas/Enrollment' }
+                  available: { type: boolean }
+                  course:
+                    oneOf:
+                      - allOf: [{ $ref: '#/components/schemas/LibraryCourse' }]
+                        unevaluatedProperties: false
+                      - { type: 'null' }
+    LearningCourse:
+      allOf:
+        - { $ref: '#/components/schemas/LibraryCourse' }
+        - type: object
+          required: [description, requirements, learningOutcomes, sections]
+          properties:
+            description: { type: string }
+            requirements: { type: array, items: { type: string } }
+            learningOutcomes: { type: array, items: { type: string } }
+            sections:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, title, position, lessons]
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+                  position: { type: integer, minimum: 0 }
+                  lessons:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LearningLesson'
+      unevaluatedProperties: false
+    LearningLesson:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, position, durationSeconds, videoStatus, isPreview, attachments, completed, completedAt]
+      properties:
+        completed: { type: boolean }
+        completedAt: { type: [string, 'null'], format: date-time }
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        position: { type: integer, minimum: 0 }
+        durationSeconds: { type: integer, minimum: 0 }
+        videoStatus: { type: string, enum: [none, pending, processing, ready, failed] }
+        isPreview: { type: boolean }
+        attachments:
+          type: array
+          maxItems: 1
+          description: Ready private PDF MediaAsset IDs, never provider identifiers or URLs
+          items: { type: string, pattern: '^[a-f0-9]{24}$' }
+    LearningCourseResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [enrollment, course, progress]
+          properties:
+            progress: { $ref: '#/components/schemas/ProgressSummary' }
+            enrollment: { $ref: '#/components/schemas/Enrollment' }
+            course: { $ref: '#/components/schemas/LearningCourse' }
+    OrderSnapshot:
+      type: object
+      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt, paidAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        courseTitle: { type: string }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        status: { type: string, enum: [pending, paid, failed, cancelled, refunded] }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        paidAt: { type: [string, 'null'], format: date-time }
+    StudentOrder:
+      allOf: [{ $ref: '#/components/schemas/OrderSnapshot' }]
+      unevaluatedProperties: false
+    AdminOrder:
+      allOf:
+        - { $ref: '#/components/schemas/OrderSnapshot' }
+        - type: object
+          required: [studentId, instructorId, commissionBps, platformAmountMinor, instructorAmountMinor]
+          properties:
+            studentId: { type: string }
+            instructorId: { type: string }
+            commissionBps: { type: integer, minimum: 0, maximum: 10000 }
+            platformAmountMinor: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            instructorAmountMinor: { type: integer, minimum: 0, maximum: 9007199254740991 }
+      unevaluatedProperties: false
+    PaymentStatus:
+      type: object
+      additionalProperties: false
+      required: [id, provider, status, amountMinor, currency, paidAt]
+      properties:
+        id: { type: string }
+        provider: { const: stripe }
+        status: { type: string, enum: [created, processing, succeeded, failed, refunded] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        paidAt: { type: [string, 'null'], format: date-time }
+    OrderListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [orders, pagination]
+          properties:
+            orders: { type: array, items: { $ref: '#/components/schemas/StudentOrder' } }
+            pagination: { $ref: '#/components/schemas/Pagination' }
+    AdminOrderListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [orders, pagination]
+          properties:
+            orders: { type: array, items: { $ref: '#/components/schemas/AdminOrder' } }
+            pagination: { $ref: '#/components/schemas/Pagination' }
+    OrderDetailsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [order, payment]
+          properties:
+            order: { $ref: '#/components/schemas/StudentOrder' }
+            payment:
+              oneOf: [{ $ref: '#/components/schemas/PaymentStatus' }, { type: 'null' }]
+    AdminOrderDetailsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [order, payment]
+          properties:
+            order: { $ref: '#/components/schemas/AdminOrder' }
+            payment:
+              oneOf: [{ $ref: '#/components/schemas/PaymentStatus' }, { type: 'null' }]
+    CheckoutOrder:
+      type: object
+      additionalProperties: false
+      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        courseTitle: { type: string }
+        amountMinor: { type: integer, minimum: 1, maximum: 999999999999 }
+        currency: { type: string, const: EGP }
+        status: { type: string, const: pending }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    CheckoutResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [order, checkoutUrl, expiresAt]
+          properties:
+            order: { $ref: '#/components/schemas/CheckoutOrder' }
+            checkoutUrl: { type: string, format: uri }
+            expiresAt: { type: string, format: date-time }
+    CatalogCategory:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+    CatalogInstructorSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    CatalogInstructorDetails:
+      type: object
+      additionalProperties: false
+      required: [id, name, bio, expertise, links]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        bio: { type: [string, 'null'] }
+        expertise: { type: [string, 'null'] }
+        links:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [label, url]
+            properties:
+              label: { type: string }
+              url: { type: string, format: uri }
+    CatalogCourseSummary:
+      type: object
+      additionalProperties: false
+      required: [id, slug, title, shortDescription, category, instructor, coverUrl,
+        level, language, priceMinor, currency, publishedAt]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        shortDescription: { type: string }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/CatalogCategory'
+            - type: 'null'
+        instructor:
+          oneOf:
+            - $ref: '#/components/schemas/CatalogInstructorSummary'
+            - type: 'null'
+        coverUrl: { type: [string, 'null'], format: uri }
+        level: { type: [string, 'null'], enum: [beginner, intermediate, advanced, all_levels, null] }
+        language: { type: [string, 'null'], enum: [ar, en, null] }
+        priceMinor: { type: integer, minimum: 0 }
+        currency: { const: EGP }
+        publishedAt: { type: [string, 'null'], format: date-time }
+    CatalogLesson:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, position, durationSeconds, isPreview]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        position: { type: integer, minimum: 0 }
+        durationSeconds: { type: integer, minimum: 0 }
+        isPreview: { type: boolean }
+    CatalogSection:
+      type: object
+      additionalProperties: false
+      required: [id, title, position, lessons]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        position: { type: integer, minimum: 0 }
+        lessons:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogLesson' }
+    CatalogCourseDetails:
+      type: object
+      required: [id, slug, title, shortDescription, category, instructor, coverUrl,
+        level, language, priceMinor, currency, publishedAt, description, requirements,
+        learningOutcomes, sections, sectionCount, lessonCount, totalDurationSeconds, unknownDurationCount]
+      properties:
+        id: { type: string }
+        slug: { type: string }
+        title: { type: string }
+        shortDescription: { type: string }
+        category:
+          oneOf:
+            - $ref: '#/components/schemas/CatalogCategory'
+            - type: 'null'
+        instructor:
+          oneOf:
+            - $ref: '#/components/schemas/CatalogInstructorDetails'
+            - type: 'null'
+        coverUrl: { type: [string, 'null'], format: uri }
+        level: { type: [string, 'null'], enum: [beginner, intermediate, advanced, all_levels, null] }
+        language: { type: [string, 'null'], enum: [ar, en, null] }
+        priceMinor: { type: integer, minimum: 0 }
+        currency: { const: EGP }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        description: { type: string }
+        requirements: { type: array, items: { type: string } }
+        learningOutcomes: { type: array, items: { type: string } }
+        sections: { type: array, items: { $ref: '#/components/schemas/CatalogSection' } }
+        sectionCount: { type: integer, minimum: 0 }
+        lessonCount: { type: integer, minimum: 0 }
+        totalDurationSeconds:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 9007199254740991
+          description: Sum of confirmed positive durations in the displayed curriculum. Null when any duration is unknown or the sum exceeds a safe JSON integer. An empty curriculum has duration zero.
+        unknownDurationCount:
+          type: integer
+          minimum: 0
+          description: Lessons without a ready video and a positive safe integer duration. Model default zero means unknown, not a measured zero-length video.
+    CatalogListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [courses, pagination]
+          properties:
+            courses: { type: array, items: { $ref: '#/components/schemas/CatalogCourseSummary' } }
+            pagination: { $ref: '#/components/schemas/Pagination' }
+    CatalogDetailsResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [course]
+          properties:
+            course: { $ref: '#/components/schemas/CatalogCourseDetails' }
+    CourseReviewDecision:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [decision]
+          properties:
+            decision: { const: approve }
+        - type: object
+          additionalProperties: false
+          required: [decision, reason]
+          properties:
+            decision: { const: reject }
+            reason: { type: string, minLength: 5, maxLength: 500 }
+    CourseReviewEvent:
+      type: object
+      required: [id, actorId, action, fromStatus, toStatus, reason, occurredAt]
+      properties:
+        id: { type: string }
+        actorId: { type: [string, 'null'], description: Null for a provider-triggered system event }
+        action: { type: string, enum: [submitted, approved, rejected, reopened, unpublished] }
+        fromStatus: { type: string, enum: [draft, pending_review, published, rejected, unavailable] }
+        toStatus: { type: string, enum: [draft, pending_review, published, rejected, unavailable] }
+        reason: { type: [string, 'null'] }
+        occurredAt: { type: string, format: date-time }
+    AdminCourseDetailsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [course, instructor, sections, reviewEvents]
+          properties:
+            course: { $ref: '#/components/schemas/Course' }
+            instructor:
+              oneOf:
+                - type: object
+                  required: [id, name, email]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    email: { type: string, format: email }
+                - type: 'null'
+            sections:
+              type: array
+              items:
+                type: object
+                required: [id, title, position, lessons]
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+                  position: { type: integer }
+                  lessons:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title, description, position, videoStatus, durationSeconds, isPreview, attachments]
+                      properties:
+                        id: { type: string }
+                        title: { type: string }
+                        description: { type: string }
+                        position: { type: integer }
+                        videoStatus: { type: string, enum: [none, pending, processing, ready, failed] }
+                        durationSeconds: { type: integer }
+                        isPreview: { type: boolean }
+                        attachments: { type: array, items: { type: string } }
+            reviewEvents:
+              type: array
+              items: { $ref: '#/components/schemas/CourseReviewEvent' }
+    Pagination:
+      type: object
+      required: [page, limit, total, totalPages]
+      properties:
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 0 }
+    Category:
+      type: object
+      required: [id, name, slug, isActive, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        slug: { type: string }
+        isActive: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateCategoryInput:
+      type: object
+      additionalProperties: false
+      required: [name, slug]
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        slug: { type: string, minLength: 1, maxLength: 120, description: Normalized lowercase Unicode letters and numbers separated by hyphens }
+    UpdateCategoryInput:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 2, maxLength: 100 }
+        slug: { type: string, minLength: 1, maxLength: 120 }
+        isActive: { type: boolean }
+    CategoryResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [category]
+          properties:
+            category: { $ref: '#/components/schemas/Category' }
+    CategoryListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [categories, pagination]
+          properties:
+            categories:
+              type: array
+              items: { $ref: '#/components/schemas/Category' }
+            pagination: { $ref: '#/components/schemas/Pagination' }
+    MediaAsset:
+      type: object
+      required: [id, purpose, targetId, status, bytes, format, originalName, attachedAt]
+      properties:
+        id: { type: string }
+        purpose: { type: string, enum: [avatar, course_cover, lesson_attachment] }
+        targetId: { type: string }
+        status: { type: string, enum: [ready] }
+        bytes: { type: integer }
+        format: { type: string }
+        originalName: { type: [string, 'null'] }
+        attachedAt: { type: string, format: date-time }
     SuccessResponse:
       type: object
       required: [data]
@@ -1184,6 +2695,13 @@ components:
       required: [id, name, email, roles, emailVerifiedAt]
       additionalProperties: false
       properties:
+        avatarAssetId:
+          type: [string, 'null']
+          description: Ready avatar media ID when returned by the profile endpoint.
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+          description: Display URL resolved by the server for the ready owned public avatar. Null for missing, invalid or unavailable images. Returned by profile endpoints, not necessarily by authentication endpoints.
         id:
           type: string
         name:
@@ -1213,6 +2731,11 @@ components:
           minLength: 2
           maxLength: 100
           description: Trimmed display name without control or Unicode formatting characters.
+    UserProfile:
+      allOf:
+        - $ref: '#/components/schemas/PublicUser'
+        - type: object
+          required: [avatarAssetId, avatarUrl]
     ProfileResponse:
       type: object
       required: [data]
@@ -1224,16 +2747,64 @@ components:
           additionalProperties: false
           properties:
             user:
-              $ref: '#/components/schemas/PublicUser'
+              $ref: '#/components/schemas/UserProfile'
         message:
           type: string
-    CreateInstructorApplicationRequest:
+    InstructorLink:
       type: object
-      required: [bio, expertise]
+      required: [label, url]
       additionalProperties: false
-      example:
-        bio: I have taught software engineering for several years and enjoy helping new developers.
-        expertise: Node.js, Express, MongoDB, and backend architecture
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+          pattern: '^https://'
+          maxLength: 2048
+          description: Normalized HTTPS URL without embedded username or password.
+    InstructorLinks:
+      type: array
+      maxItems: 5
+      description: URLs must remain unique after server normalization.
+      items:
+        $ref: '#/components/schemas/InstructorLink'
+    InstructorProfile:
+      type: object
+      required: [id, name, avatarAssetId, avatarUrl, bio, expertise, links]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: '^[a-fA-F0-9]{24}$'
+        name:
+          type: string
+        avatarAssetId:
+          oneOf:
+            - type: string
+              pattern: '^[a-fA-F0-9]{24}$'
+            - type: 'null'
+          description: Null until an avatar is attached by the media story.
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+          description: Server-resolved ready owned avatar URL, or null when unavailable. Never construct an image URL from avatarAssetId.
+        bio:
+          type: string
+          minLength: 50
+          maxLength: 2000
+        expertise:
+          type: string
+          minLength: 2
+          maxLength: 200
+        links:
+          $ref: '#/components/schemas/InstructorLinks'
+    UpdateInstructorProfileRequest:
+      type: object
+      minProperties: 1
+      additionalProperties: false
       properties:
         bio:
           type: string
@@ -1243,6 +2814,43 @@ components:
           type: string
           minLength: 2
           maxLength: 200
+        links:
+          $ref: '#/components/schemas/InstructorLinks'
+    InstructorProfileResponse:
+      type: object
+      required: [data]
+      additionalProperties: false
+      properties:
+        data:
+          type: object
+          required: [instructor]
+          additionalProperties: false
+          properties:
+            instructor:
+              $ref: '#/components/schemas/InstructorProfile'
+        message:
+          type: string
+    CreateInstructorApplicationRequest:
+      type: object
+      required: [bio, expertise]
+      additionalProperties: false
+      example:
+        bio: I have taught software engineering for several years and enjoy helping new developers.
+        expertise: Node.js, Express, MongoDB, and backend architecture
+        links:
+          - label: Portfolio
+            url: https://portfolio.example.com/
+      properties:
+        bio:
+          type: string
+          minLength: 50
+          maxLength: 2000
+        expertise:
+          type: string
+          minLength: 2
+          maxLength: 200
+        links:
+          $ref: '#/components/schemas/InstructorLinks'
     ReviewInstructorApplicationRequest:
       oneOf:
         - type: object
@@ -1271,6 +2879,7 @@ components:
         - userId
         - bio
         - expertise
+        - links
         - status
         - reviewedBy
         - rejectionReason
@@ -1288,6 +2897,8 @@ components:
           type: string
         expertise:
           type: string
+        links:
+          $ref: '#/components/schemas/InstructorLinks'
         status:
           $ref: '#/components/schemas/InstructorApplicationStatus'
         reviewedBy:
@@ -1409,6 +3020,26 @@ components:
           type: string
           minLength: 20
           maxLength: 10000
+        shortDescription:
+          oneOf:
+            - const: ''
+            - type: string
+              minLength: 10
+              maxLength: 300
+          default: ''
+          description: May stay empty while drafting but is required before review submission.
+        level:
+          oneOf:
+            - type: string
+              enum: [beginner, intermediate, advanced, all_levels]
+            - type: 'null'
+          default: null
+        language:
+          oneOf:
+            - type: string
+              enum: [ar, en]
+            - type: 'null'
+          default: null
         requirements:
           type: array
           maxItems: 30
@@ -1444,6 +3075,9 @@ components:
         title: Production Backend Engineering
         categoryId: 507f1f77bcf86cd799439011
         description: Build reliable backend services using practical production architecture.
+        shortDescription: Design and operate maintainable production backend services.
+        level: intermediate
+        language: en
         requirements: [JavaScript fundamentals]
         learningOutcomes: [Design maintainable REST APIs]
         priceMinor: 125000
@@ -1463,11 +3097,21 @@ components:
         - title
         - slug
         - description
+        - shortDescription
+        - coverAssetId
+        - level
+        - language
         - requirements
         - learningOutcomes
         - priceMinor
         - currency
         - status
+        - submittedAt
+        - reviewedAt
+        - publishedAt
+        - unavailableAt
+        - reviewedBy
+        - rejectionReason
         - createdAt
         - updatedAt
       additionalProperties: false
@@ -1505,6 +3149,22 @@ components:
           readOnly: true
         description:
           type: string
+        shortDescription:
+          type: string
+          maxLength: 300
+        coverAssetId:
+          type: [string, 'null']
+          description: Ready Cloudinary image asset, if one is attached.
+        level:
+          oneOf:
+            - type: string
+              enum: [beginner, intermediate, advanced, all_levels]
+            - type: 'null'
+        language:
+          oneOf:
+            - type: string
+              enum: [ar, en]
+            - type: 'null'
         requirements:
           type: array
           items:
@@ -1520,7 +3180,14 @@ components:
         currency:
           const: EGP
         status:
-          const: draft
+          type: string
+          enum: [draft, pending_review, published, rejected, unavailable]
+        submittedAt: { type: [string, 'null'], format: date-time }
+        reviewedAt: { type: [string, 'null'], format: date-time }
+        publishedAt: { type: [string, 'null'], format: date-time }
+        unavailableAt: { type: [string, 'null'], format: date-time }
+        reviewedBy: { type: [string, 'null'] }
+        rejectionReason: { type: [string, 'null'] }
         createdAt:
           type: string
           format: date-time
@@ -1591,6 +3258,10 @@ components:
           type: string
           minLength: 3
           maxLength: 160
+        description:
+          type: string
+          maxLength: 10000
+          default: ''
         isPreview:
           type: boolean
           default: false
@@ -1603,6 +3274,9 @@ components:
           type: string
           minLength: 3
           maxLength: 160
+        description:
+          type: string
+          maxLength: 10000
         isPreview:
           type: boolean
     OrderRequest:
@@ -1620,7 +3294,7 @@ components:
             pattern: '^[a-fA-F0-9]{24}$'
     Lesson:
       type: object
-      required: [id, sectionId, title, position, isPreview, videoStatus, durationSeconds, createdAt, updatedAt]
+      required: [id, sectionId, title, description, position, isPreview, videoStatus, durationSeconds, attachments, createdAt, updatedAt]
       additionalProperties: false
       properties:
         id:
@@ -1631,6 +3305,13 @@ components:
           pattern: '^[a-fA-F0-9]{24}$'
         title:
           type: string
+        description:
+          type: string
+          maxLength: 10000
+        attachments:
+          type: array
+          maxItems: 1
+          items: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
         position:
           type: integer
           minimum: 0

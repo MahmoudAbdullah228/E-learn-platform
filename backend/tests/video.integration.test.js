@@ -373,12 +373,13 @@ test('Mux adapter sends private basic test-asset settings without exposing crede
   assert.deepEqual(body, {
     cors_origin: 'https://frontend.example', timeout: 120, test: true,
     new_asset_settings: {
+      playback_policies: ['signed'],
       passthrough: '11111111-1111-4111-8111-111111111111',
       meta: { external_id: '507f1f77bcf86cd799439011' },
       video_quality: 'basic',
     },
   });
-  assert.equal('playback_policies' in body.new_asset_settings, false);
+  assert.deepEqual(body.new_asset_settings.playback_policies, ['signed']);
   assert.equal(JSON.stringify(body).includes('token-secret'), false);
 });
 

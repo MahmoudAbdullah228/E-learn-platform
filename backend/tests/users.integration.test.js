@@ -68,6 +68,8 @@ test('GET /users/me returns only the current public profile', async () => {
     email: 'profile@example.com',
     roles: ['student'],
     emailVerifiedAt: user.emailVerifiedAt.toISOString(),
+    avatarAssetId: null,
+    avatarUrl: null,
   } } });
   for (const secret of ['passwordHash', 'tokenVersion', 'passwordVersion', 'passwordReset']) {
     assert.equal(JSON.stringify(response.body).includes(secret), false);
@@ -96,6 +98,8 @@ test('PATCH /users/me rejects protected and unknown fields without changes', asy
     { name: 'Attacker', email: 'other@example.com' },
     { name: 'Attacker', status: 'suspended' },
     { name: 'Attacker', passwordHash: 'plaintext' },
+    { name: 'Attacker', avatarUrl: 'https://example.test/foreign-avatar.png' },
+    { name: 'Attacker', avatarAssetId: new mongoose.Types.ObjectId().toString() },
   ]) {
     const response = await request(app).patch('/api/v1/users/me')
       .auth(accessToken, { type: 'bearer' }).send(body).expect(400);

@@ -36,12 +36,51 @@ import {
 import { createVideoService } from './modules/video/video.service.js';
 import { muxVideoProvider } from './services/muxVideo.service.js';
 import { createVideoCleanupWorker } from './services/videoCleanupWorker.service.js';
+import {
+  createInstructorProfileRouter,
+  createPublicInstructorsRouter,
+} from './modules/instructors/instructors.routes.js';
+import { createInstructorsService } from './modules/instructors/instructors.service.js';
+import { createMediaRouter } from './modules/media/media.routes.js';
+import { createMediaService } from './modules/media/media.service.js';
+import { cloudinaryMediaProvider } from './services/cloudinaryMedia.service.js';
+import { createMediaCleanupWorker } from './services/mediaCleanupWorker.service.js';
+import {
+  createAdminCourseReviewRouter, createInstructorCourseReviewRouter,
+} from './modules/courseReview/courseReview.routes.js';
+import { createCourseReviewService } from './modules/courseReview/courseReview.service.js';
+import {
+  createAdminCategoriesRouter, createPublicCategoriesRouter,
+} from './modules/categories/categories.routes.js';
+import { createCategoriesService } from './modules/categories/categories.service.js';
+import { createCatalogRouter } from './modules/catalog/catalog.routes.js';
+import { createCatalogService } from './modules/catalog/catalog.service.js';
+import { createCheckoutRouter } from './modules/checkout/checkout.routes.js';
+import { createCheckoutService } from './modules/checkout/checkout.service.js';
+import { stripePaymentProvider } from './services/stripePayment.service.js';
+import { createPaymentInboxService } from './modules/payments/paymentInbox.service.js';
+import { createPaymentWebhookRouter } from './modules/payments/payment.routes.js';
+import { createPaymentWebhookWorker } from './services/paymentWebhookWorker.service.js';
+import { authenticate } from './middlewares/authenticate.js';
+import { noStore } from './middlewares/noStore.js';
+import { createAuthenticatedRateLimiter } from './middlewares/rateLimiter.js';
+import { createEnrollmentService } from './modules/enrollments/enrollment.service.js';
+import { createFreeEnrollmentRouter, createLibraryRouter } from './modules/enrollments/enrollment.routes.js';
+import { createOrderService } from './modules/orders/order.service.js';
+import { createAdminOrdersRouter, createStudentOrdersRouter } from './modules/orders/order.routes.js';
+import { createLearningAccessService } from './modules/learningAccess/learningAccess.service.js';
+import { createLearningAccessRouter } from './modules/learningAccess/learningAccess.routes.js';
+import { createProgressService } from './modules/progress/progress.service.js';
+import { createProgressRouter } from './modules/progress/progress.routes.js';
 
 export function createApp({
   emailSender,
   rateLimitStoreFactory,
   instructorApplicationsService: injectedInstructorApplicationsService,
+  instructorsService: injectedInstructorsService,
   videoProvider = muxVideoProvider,
+  mediaProvider = cloudinaryMediaProvider,
+  paymentProvider = stripePaymentProvider,
 } = {}) {
   const application = express();
   const authService = createAuthService({ emailSender: emailSender ?? emailService });
@@ -49,11 +88,27 @@ export function createApp({
     emailSender: emailSender ?? emailService,
   });
   const sessionService = createSessionService();
-  const usersService = createUsersService();
+  const usersService = createUsersService({ mediaProvider });
   const instructorApplicationsService = injectedInstructorApplicationsService
     ?? createInstructorApplicationsService();
+  const instructorsService = injectedInstructorsService ?? createInstructorsService({ mediaProvider });
   const coursesService = createCoursesService();
   const videoService = createVideoService({ videoProvider });
+  const mediaService = createMediaService({ provider: mediaProvider });
+  const learningAccessService = createLearningAccessService({ videoProvider, mediaProvider, videoService,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.learningAccessService = learningAccessService;
+  const categoriesService = createCategoriesService();
+  const catalogService = createCatalogService({ mediaProvider });
+  const enrollmentService = createEnrollmentService({ mediaProvider });
+  const orderService = createOrderService();
+  const courseReviewService = createCourseReviewService();
+  const checkoutService = createCheckoutService({ provider: paymentProvider,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.checkoutService = checkoutService;
+  const paymentInbox = createPaymentInboxService({ provider: paymentProvider });
+  application.locals.paymentWebhookWorker = createPaymentWebhookWorker({ provider: paymentProvider,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
   const deliveryHandlers = Object.freeze({
     email_verification: authService.deliverVerificationRequest,
     password_reset: passwordResetService.deliverResetRequest,
@@ -70,9 +125,14 @@ export function createApp({
     videoProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
   });
+  application.locals.mediaCleanupWorker = createMediaCleanupWorker({
+    provider: mediaProvider, shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
+  });
 
   application.disable('x-powered-by');
   application.set('trust proxy', env.TRUST_PROXY_HOPS);
+  application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders',
+    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons'], noStore);
   application.use(
     pinoHttp({
       logger,
@@ -89,6 +149,9 @@ export function createApp({
     express.raw({ type: 'application/json', limit: '1mb' }),
     createVideoWebhookRouter({ videoService }),
   );
+  application.use('/api/v1/webhooks/stripe',
+    express.raw({ type: 'application/json', limit: '1mb', inflate: false }),
+    createPaymentWebhookRouter({ inbox: paymentInbox }));
   application.use(express.json({ limit: '1mb' }));
 
   application.use('/api/v1/health', healthRouter);
@@ -102,13 +165,49 @@ export function createApp({
       rateLimitStoreFactory,
     }),
   );
+  application.use('/api/v1/users/me/courses', createProgressRouter({ service: createProgressService(),
+    rateLimitStoreFactory }));
+  application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders'],
+    noStore, authenticate, createAuthenticatedRateLimiter({ namespace: 'private-read',
+      windowMs: env.PRIVATE_READ_RATE_LIMIT_WINDOW_MS, limit: env.PRIVATE_READ_RATE_LIMIT_MAX,
+      storeFactory: rateLimitStoreFactory }));
+  application.use('/api/v1/users/me/courses', createLibraryRouter({ enrollmentService }));
+  application.use('/api/v1/users/me/orders', createStudentOrdersRouter({ orderService }));
+  application.use('/api/v1/admin/orders', createAdminOrdersRouter({ orderService }));
   application.use('/api/v1/users', createUsersRouter({ usersService }));
+  application.use('/api/v1/lessons', createLearningAccessRouter({ service: learningAccessService,
+    rateLimitStoreFactory }));
+  application.use('/api/v1/media', createMediaRouter({ mediaService, rateLimitStoreFactory }));
+  application.use('/api/v1/categories', createPublicCategoriesRouter({
+    categoriesService, rateLimitStoreFactory,
+  }));
+  application.use('/api/v1/courses', createCheckoutRouter({ checkoutService, rateLimitStoreFactory }));
+  application.use('/api/v1/courses', createFreeEnrollmentRouter({ enrollmentService, rateLimitStoreFactory }));
+  application.use('/api/v1/courses', createCatalogRouter({ catalogService,
+    rateLimitStoreFactory }));
+  application.use('/api/v1/admin/categories', createAdminCategoriesRouter({
+    categoriesService, rateLimitStoreFactory,
+  }));
   application.use('/api/v1/instructor-applications', createInstructorApplicationsRouter({
     instructorApplicationsService,
   }));
   application.use('/api/v1/admin/instructor-applications',
     createAdminInstructorApplicationsRouter({ instructorApplicationsService }));
+  application.use('/api/v1/instructors', createPublicInstructorsRouter({
+    instructorsService,
+    rateLimitStoreFactory,
+  }));
+  application.use('/api/v1/instructor', createInstructorProfileRouter({
+    instructorsService,
+    rateLimitStoreFactory,
+  }));
   application.use('/api/v1/instructor/courses', createCoursesRouter({ coursesService }));
+  application.use('/api/v1/instructor/courses', createInstructorCourseReviewRouter({
+    reviewService: courseReviewService, rateLimitStoreFactory,
+  }));
+  application.use('/api/v1/admin/courses', createAdminCourseReviewRouter({
+    reviewService: courseReviewService, rateLimitStoreFactory,
+  }));
   application.use('/api/v1/instructor', createCurriculumRouter({
     curriculumService: createCurriculumService(),
   }));

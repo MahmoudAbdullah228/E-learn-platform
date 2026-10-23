@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 
+import { createInstructorLinksField } from './instructorLinks.schema.js';
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -44,11 +46,21 @@ const userSchema = new mongoose.Schema(
         {
           bio: { type: String, required: true, trim: true, minlength: 50, maxlength: 2000 },
           expertise: { type: String, required: true, trim: true, minlength: 2, maxlength: 200 },
+          links: createInstructorLinksField(),
         },
         { _id: false },
       ),
       default: undefined,
     },
+    avatarAssetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'MediaAsset',
+      default: null,
+    },
+    mediaRevision: { type: Number, default: 0, select: false },
+    instructorReviewRevision: { type: Number, default: 0, select: false },
+    checkoutRevision: { type: Number, default: 0, select: false },
+    learningRevision: { type: Number, default: 0, select: false },
     emailVerifiedAt: {
       type: Date,
       default: null,

@@ -15,6 +15,12 @@ const courseFields = {
   description: textSchema({
     field: 'Description', minimum: 20, maximum: 10000, multiline: true,
   }),
+  shortDescription: z.union([
+    z.literal(''),
+    textSchema({ field: 'Short description', minimum: 10, maximum: 300 }),
+  ]),
+  level: z.enum(['beginner', 'intermediate', 'advanced', 'all_levels']).nullable(),
+  language: z.enum(['ar', 'en']).nullable(),
   requirements: uniqueTextListSchema,
   learningOutcomes: uniqueTextListSchema,
   priceMinor: z.number().int().safe().nonnegative(),
@@ -26,6 +32,9 @@ export const createCourseSchema = z.object({
   requirements: courseFields.requirements.default([]),
   learningOutcomes: courseFields.learningOutcomes.default([]),
   currency: courseFields.currency.default('EGP'),
+  shortDescription: courseFields.shortDescription.default(''),
+  level: courseFields.level.default(null),
+  language: courseFields.language.default(null),
 }).strict();
 
 export const updateCourseSchema = z.object(courseFields).partial().strict().refine(
@@ -38,7 +47,7 @@ export const courseIdParamsSchema = z.object({
 }).strict();
 
 export const listCoursesQuerySchema = z.object({
-  status: z.literal('draft').default('draft'),
+  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable']).default('draft'),
   page: z.string().regex(/^[1-9]\d*$/).default('1').transform(Number)
     .pipe(z.number().int().min(1).max(1_000_000)),
   limit: z.string().regex(/^[1-9]\d*$/).default('20').transform(Number)
