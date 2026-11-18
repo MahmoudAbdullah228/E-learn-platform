@@ -72,6 +72,8 @@ import { createLearningAccessService } from './modules/learningAccess/learningAc
 import { createLearningAccessRouter } from './modules/learningAccess/learningAccess.routes.js';
 import { createProgressService } from './modules/progress/progress.service.js';
 import { createProgressRouter } from './modules/progress/progress.routes.js';
+import { createAdminUsersRouter } from './modules/adminUsers/adminUsers.routes.js';
+import { createAdminUsersService } from './modules/adminUsers/adminUsers.service.js';
 
 export function createApp({
   emailSender,
@@ -132,7 +134,7 @@ export function createApp({
   application.disable('x-powered-by');
   application.set('trust proxy', env.TRUST_PROXY_HOPS);
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders',
-    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons'], noStore);
+    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users'], noStore);
   application.use(
     pinoHttp({
       logger,
@@ -155,6 +157,8 @@ export function createApp({
   application.use(express.json({ limit: '1mb' }));
 
   application.use('/api/v1/health', healthRouter);
+  application.use('/api/v1/admin/users', createAdminUsersRouter({ service: createAdminUsersService(),
+    rateLimitStoreFactory }));
   application.use('/api/v1', docsRouter);
   application.use(
     '/api/v1/auth',

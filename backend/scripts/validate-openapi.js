@@ -10,6 +10,18 @@ const contract = await parse(contractPath);
 
 assert.equal(validation.valid, true, 'OpenAPI schema validation failed');
 assert.equal(contract.openapi, '3.1.0');
+for (const [method, path] of [['get', '/admin/users'], ['get', '/admin/users/{userId}'],
+  ['patch', '/admin/users/{userId}/status']]) {
+  const operation = contract.paths[path]?.[method];
+  assert.ok(operation, `${method} ${path} is missing`);
+  assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
+  for (const status of ['200', '400', '401', '403', '429', '500', '503']) {
+    assert.ok(operation.responses[status], `${path} response ${status} is missing`);
+  }
+  assert.equal(operation.responses['200'].headers['Cache-Control'].schema.const, 'no-store');
+}
+assert.equal(contract.components.schemas.AdminUserStatusInput.additionalProperties, false);
+assert.deepEqual(contract.components.schemas.AdminUserStatusInput.required, ['status', 'reason', 'expectedRevision']);
 for (const path of ['/users/me/courses/{courseId}/lessons/{lessonId}/progress',
   '/users/me/courses/{courseId}/last-lesson']) {
   const operation = contract.paths[path]?.put;

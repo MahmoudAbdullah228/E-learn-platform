@@ -1,4 +1,4 @@
-# Frontend API handoff — Sprint 1 and implemented Sprint 2 stories
+# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-03
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 For coordinated Sprint 2 acceptance, use [the staging runbook](staging-acceptance.md)
@@ -9,6 +9,9 @@ set your client's backend origin explicitly. JSON request bodies require `Conten
 
 | Method | Path | Request | Success |
 | --- | --- | --- | --- |
+| GET | `/admin/users` | Admin Bearer; optional q/role/status/cursor/limit | 200, `{data:{users,pagination:{nextCursor,hasMore}}}` |
+| GET | `/admin/users/:userId` | Admin Bearer; no query | 200, `{data:{user}}` |
+| PATCH | `/admin/users/:userId/status` | Admin Bearer; `{status,reason,expectedRevision}` | 200, `{data:{user},message}` |
 | GET | `/health` | None | 200, `{ data: { status: "ok", uptimeSeconds: number } }` |
 | POST | `/auth/register` | `{ name, email, password }` | 201, `{ data: { user }, message }` |
 | POST | `/auth/verify-email` | `{ token }` | 200, `{ data: { verified: true }, message }` |
@@ -266,7 +269,52 @@ Create a course with `title`, `categoryId`, `description`, and integer `priceMin
 
 Use `GET /instructor/courses` for the dashboard and `GET /instructor/courses/:courseId` for the owner's course details. The list defaults to drafts and accepts a status filter; detail reads work in every state. PATCH is partial, requires at least one editable field, and works only in draft. A title change does not change the slug. `category` can be `null` if its original database record was deleted; retain `categoryId` and prompt the instructor to choose an active category. Prices are returned in the smallest EGP unit and should be formatted for display without floating-point persistence.
 
-## Curriculum flow
+## S3-03 — Admin users and account status
+
+Use an active verified admin Bearer session. The three `/admin/users` endpoints are
+documented in OpenAPI 1.1.0 and always use `Cache-Control: no-store`.
+
+The list accepts `q` (literal case-insensitive name/email prefix, 1–100 chars),
+`role=student|instructor|admin`, `status=active|suspended`, `limit=1..100` (default 20),
+and an opaque `cursor`. Save `data.pagination.nextCursor` and keep the same q/role/status
+for the next page. Changing filters clears the cursor. Order is createdAt/id descending;
+no total count is returned, and concurrent account edits can affect a later live page.
+Invalid/tampered/filter-mismatched cursors return `400 INVALID_CURSOR`; restart the list.
+
+User fields are `{id,name,email,roles,status,instructorStatus,revision}`. Detail and PATCH
+also include createdAt/updatedAt. The revision is for status decisions, not profile edits.
+Treat email/reasons as private admin data; render all text as text, not HTML.
+
+To suspend/reactivate, obtain the latest user revision and send:
+
+```json
+{
+  "status": "suspended",
+  "reason": "Account suspended after a documented security review",
+  "expectedRevision": 0
+}
+```
+
+`status` can be active/suspended. Reason is required, trimmed plain text 10–500 chars;
+control/format characters and all extra body/query fields are rejected. No role editing,
+delete-user operation or Idempotency-Key is supported here. Update the UI only after 200.
+The response is `{data:{user},message}`. Same status with the current revision returns
+an explicit no-op message; a stale revision returns `409 STATE_CONFLICT` even when the
+desired status matches. Reload and let the operator decide again instead of blind retry.
+
+Self suspension returns `409 SELF_SUSPENSION_NOT_ALLOWED`; `LAST_ACTIVE_ADMIN` protects
+the final usable admin. `401` means login is required; `403` means current roles forbid
+the action; `404 USER_NOT_FOUND` means the target is missing. Reactivation does not restore
+old access/refresh tokens or verify email: the user must sign in again. Purchases, progress,
+instructor approval and financial obligations remain preserved. Status reasons are audited
+and are not exposed to the suspended user through this API.
+
+Directory GETs share a per-user read quota across target IDs; status PATCH has a separate
+per-user write quota. Honor `429 Retry-After`; `503 RATE_LIMIT_UNAVAILABLE` means the store
+failed closed. Staging B01 acceptance remains separate from automated local tests.
+See [implementation/security details](sprint_3_admin_users.md).
+
+## Curriculum editor flow
 
 Load the editor with `GET /instructor/courses/:courseId/sections`; sections and nested lessons are already ordered by `position`. Create operations append automatically, so the frontend must not send a position. To reorder, send every current sibling ID exactly once in the desired order. If the API returns `409 INVALID_CURRICULUM_ORDER`, reload before retrying because another request changed the set. Section deletion also removes its lessons. Lesson create accepts plain-text `description` up to 10000 characters and `isPreview` (default `false`); `title`, `description`, and `isPreview` are editable while the course remains a draft.
 

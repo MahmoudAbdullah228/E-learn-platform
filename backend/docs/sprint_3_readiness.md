@@ -12,6 +12,10 @@ G04/G06 have model foundations, and G05 has policy/guard models. Provider reduce
 activation, eligibility and refund/payout HTTP workflows remain open in their owning
 Stories. The snapshot below is not a claim that those models are still absent today.
 
+S3-03 follow-up: admin user directory/status workflow, audit and session fencing are now
+implemented locally; G09 implementation is covered by [S3-03 evidence](sprint_3_admin_users.md).
+Its Staging B01/qualified-review acceptance remains open. S3-04 is the current next Story.
+
 ## 1. New automated baseline — PASS
 
 | Check | Observed result |
@@ -129,5 +133,5 @@ does not authorize modifying the providers, creating accounts or deployment toda
 
 **S3-01 local preparation is complete; it is not full Staging/product acceptance.** Next:
 S3-02 internal financial foundation was the next step at capture and is now implemented
-locally; current next step is S3-03. S3-18 requires
+locally, followed by S3-03 admin users; current next step is S3-04. S3-18 requires
 only its remaining gap/evidence work, not rebuilding profile/catalog changes already done.

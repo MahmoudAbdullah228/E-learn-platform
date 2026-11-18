@@ -191,6 +191,8 @@ test('limited routes request isolated shared-store instances by limiter namespac
 
   assert.deepEqual(namespaces,
     [
+      'admin-users-read',
+      'admin-users-write',
       'register',
       'verify-email',
       'resend-verification',

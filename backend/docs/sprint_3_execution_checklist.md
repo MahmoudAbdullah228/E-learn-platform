@@ -71,7 +71,7 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 | --- | --- | --- |
 | S3-01 | الإعداد المحلي مكتمل؛ team/Staging/capacity inputs مفتوحة منفصلة | 432 PASS + policy/ADRs/contracts/gaps/readiness؛ لا ادعاء قبول Staging |
 | S3-02 | مكتملة محليًا؛ أساس داخلي فقط، دون HTTP/provider activation | 462 PASS + lint/OpenAPI؛ الفهارس وrollback/concurrency وفحص legacy؛ [الدليل](sprint_3_financial_foundation.md) |
-| S3-03 | لم تبدأ | user state/session invalidation/last-admin آمنة |
+| S3-03 | مكتملة محليًا؛ 484 PASS + lint/OpenAPI | directory/status + audit/session fencing؛ [الدليل](sprint_3_admin_users.md)؛ B01 Staging لم ينفّذ |
 | S3-04 | لم تبدأ | archived مشتريه يحتفظ بالوصول؛ شراء جديد ممنوع |
 | S3-05 | لم تبدأ | refund reservation/idempotency/provider ambiguity محفوظة |
 | S3-06 | لم تبدأ | signed events/replay/recovery والـledger متسقة |
@@ -96,6 +96,11 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 guards وحساب الأموال الدقيق وفحص legacy للقراءة فقط. اختبارات الـStory الثلاثون ناجحة،
 والمراجعة الكاملة 462 PASS. لم تُفعّل سياسة مالية أو refund/payout workflow، ولم يحدث
 commit/push. التالي S3-03، مع بقاء بوابات Staging والتشغيل مفتوحة.
+
+تحديث S3-03: اكتمل directory/status workflow محليًا مع حماية الأدمن والجلسات والتدقيق،
+وتحديث OpenAPI 1.1.0 وfrontend handoff. `npm run verify`: **484 PASS** دون fail/skip/
+cancel، 156.85 ثانية. S3-01/S3-02 رُفعا سابقًا في `afaf965` بطلب المستخدم؛ تغييرات
+S3-03 محلية دون commit/push. التالي **S3-04**؛ قبول Staging B01 ما زال مفتوحًا.
 
 1. Models/indexes، أو بيان عدم الحاجة لموديل/فهرس جديد؛ Zod request validation.
 2. Services/policies/adapters ثم controllers/routes/middlewares؛ لا provider call داخل transaction callback قابل للإعادة.

@@ -1,16 +1,18 @@
 # Sprint 3 — S3-01 contract and schema handoff
 
-Date: 2026-11-18. Status: **design contract, NOT published or implemented API**.
+Date: 2026-11-18. Status: **S3-02 foundation and S3-03 admin users implemented locally;
+later Story contracts remain design only**.
 Precedence for selected product behavior: [policy register](sprint_3_policy_register.md).
 Architecture: [financial ADR](adr-0006-financial-integrity-and-settlements.md) and
-[content ADR](adr-0007-published-course-revisions.md). The served OpenAPI remains unchanged.
+[content ADR](adr-0007-published-course-revisions.md). Public implemented operations are
+defined by the served OpenAPI, now including S3-03. This file is not a substitute for it.
 
 ## 1. S3-02 internal foundation boundary
 
 S3-02 is implemented locally as an internal foundation, not a refund/payout HTTP release.
 The implementation, indexes, service interfaces and verification are recorded in
 [S3-02 evidence](sprint_3_financial_foundation.md). The following table defines its scope;
-the HTTP contracts in later sections remain unimplemented design contracts.
+S3-03 is implemented as noted below; S3-04 onward remain unimplemented design contracts.
 
 | Layer | Foundation work | Must not do |
 | --- | --- | --- |
@@ -53,6 +55,11 @@ is explicit design input; activation later is versioned and deployed, not a hidd
 ## 3. First product contracts to implement after foundation
 
 ### S3-03 admin users
+
+Implemented locally; [behavior and verification](sprint_3_admin_users.md). Directory
+pagination uses signed createdAt/id cursors bound to normalized filters. Status changes
+use the status-specific revision; same-state no-op requires the current revision, stale
+revision always conflicts. No Idempotency-Key is introduced for this operation.
 
 - `GET /admin/users`: optional q (1–100 safe chars; email/name prefix, escaped not raw regex),
   role (student/instructor/admin), status (active/suspended), cursor/limit. Response

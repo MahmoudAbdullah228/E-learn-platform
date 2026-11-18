@@ -1,5 +1,14 @@
 # Sprint 2 delivery evidence
 
+## S3-03 admin user status — 2026-11-18
+
+`npm run verify` passed lint, OpenAPI validation and **484 tests, 0 failed, 0 skipped,
+0 cancelled** (156.85 seconds), including 22 new admin-user regressions. Source:
+`afaf965` plus the uncommitted local S3-03 patch on `feature/sprint-3-mvp-closure`.
+Integration used the isolated `_test` replica set; no application users/provider accounts
+were changed. [S3-03 details](sprint_3_admin_users.md). This is local automated evidence;
+Sprint 3 B01 and all A01–A19 Staging results remain NOT RUN.
+
 ## S3-02 internal financial foundation — 2026-11-18
 
 On branch `feature/sprint-3-mvp-closure`, based on `64f742a7b319f4d1f3be8f5ff9837ee6c9ab4687`

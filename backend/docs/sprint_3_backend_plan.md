@@ -4,7 +4,7 @@
 > المالك: BE1. التنفيذ تدريجيًا، Story واحدة ثم اختبارات ومراجعة وتسليم عقدها.
 > التاريخ: 2026-10-05. النطاق: إغلاق رحلة الـMVP التجريبية، وليس إطلاقًا تجاريًا.
 > مراجعة المزامنة وتقسيم التنفيذ: 2026-11-18؛ راجع [قائمة التنفيذ خطوة بخطوة](sprint_3_execution_checklist.md). لا تغيّر المراجعة السياسات التجارية إلى قرارات معتمدة.
-> تحديث S3-01 في نفس التاريخ: المستخدم فوّض اختيار السياسات الأنسب؛ الاختيارات المعتمدة للتنفيذ وحدودها في [Policy register](sprint_3_policy_register.md)، والـbaseline والفجوات في [Readiness evidence](sprint_3_readiness.md). أُنجز أساس S3-02 الداخلي محليًا؛ [دليل التنفيذ](sprint_3_financial_foundation.md). بقية workflows لم تُنفّذ بعد.
+> تحديث S3-01 في نفس التاريخ: المستخدم فوّض اختيار السياسات الأنسب؛ الاختيارات المعتمدة للتنفيذ وحدودها في [Policy register](sprint_3_policy_register.md)، والـbaseline والفجوات في [Readiness evidence](sprint_3_readiness.md). أُنجز أساس S3-02 الداخلي محليًا؛ [دليل التنفيذ](sprint_3_financial_foundation.md). أُضيف workflow مستخدمي S3-03؛ [دليل التسليم](sprint_3_admin_users.md). S3-04 وما بعدها لم تُنفّذ بعد.
 > توجيه المستخدم: هذا آخر Sprint للـMVP؛ أي نقص أساسي من Sprint 1 أو 2 يدخل الإغلاق هنا، ولا يُؤجَّل إلى Sprint 4.
 > لا يتضمن إعداد هذه الخطة تنفيذ كود، أو تغيير بيانات، أو إجراء على GitHub.
 
@@ -52,7 +52,7 @@
 | Refund / Payout models وواجهاتهما | models/indexes والأساس الداخلي منفّذة محليًا في S3-02؛ الواجهات والمعالجة المالية لم تنفّذ بعد |
 | تحويل الأرباح من pending إلى eligible | السياسات مختارة للتنفيذ، وموديل النسخ موجود؛ لا activation أو eligibility worker بعد |
 | لوحات المحاضر المالية وdashboard الإداري | مطلوبة في هذا الـSprint |
-| تعليق المستخدمين وتفعيله عبر admin API | `User.status` موجود؛ workflow الإداري غير منفّذ |
+| تعليق المستخدمين وتفعيله عبر admin API | workflow منفّذ محليًا في S3-03 مع audit/session fencing؛ قبول Staging B01 لم ينفّذ بعد |
 | الأرشفة مع الاحتفاظ بوصول المشترين | `archived` غير موجود في enum الحالي، وقراءات التعلم تشترط published |
 | تعديل مادي منشور مع بقاء النسخة الحية | غير منفّذ؛ التعديل الحالي للمسودات فقط |
 | قبول Sprint 2 على Staging | حالات A01–A19 كلها NOT RUN بحسب evidence الحالي |
@@ -777,4 +777,4 @@ MVP §14 technical decisions مستمرة: React عند الفريق، REST Expr
 
 الخطة تغطي النطاق المطلوب؛ لا تعني أن التنفيذ اكتمل أو أن 100% من كل العيوب المحتملة يمكن ضمان غيابها. رفض الجدول غير الواقعي أو توثيق policy blocker لا يُنقص نطاق التسليم: يُحل داخل خطة الإغلاق النهائي قبل sign-off.
 
-تحديث التنفيذ: أُنجز إعداد S3-01 وأساس S3-02 الداخلي محليًا في 2026-11-18؛ baseline والسياسات والفجوات في [Readiness evidence](sprint_3_readiness.md)، ودليل S3-02 في [Financial foundation](sprint_3_financial_foundation.md). التالي S3-03، مع متابعة المتبقي من S3-18 والأدلة. Staging وreviewer/capacity gates ما زالت منفصلة، ولا توليد Sprint كامل دفعة واحدة.
+تحديث التنفيذ: أُنجز إعداد S3-01 وأساس S3-02 وworkflow مستخدمي S3-03 محليًا في 2026-11-18؛ baseline والسياسات والفجوات في [Readiness evidence](sprint_3_readiness.md)، ودليل S3-02 في [Financial foundation](sprint_3_financial_foundation.md)، وS3-03 في [Admin users](sprint_3_admin_users.md). التالي S3-04، مع متابعة المتبقي من S3-18 والأدلة. Staging وreviewer/capacity gates ما زالت منفصلة، ولا توليد Sprint كامل دفعة واحدة.

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -20,6 +20,8 @@ info:
     S2-09 adds free enrollment, the owner's library/learning outline, owner-only order polling,
     and admin order reads. S2-10 adds authorized signed video playback and temporary private PDF downloads.
     S2-11 adds enrollment-bound lesson completion/resume and dynamic progress reads.
+    S3-03 adds admin-only user search/detail and transactional suspension/reactivation,
+    audited with current session checks and protection against losing usable administrators.
     Refunds and payouts remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
@@ -41,6 +43,8 @@ tags:
     description: Registration, email verification, session management, and password reset
   - name: Users
     description: Authenticated user profile
+  - name: Admin users
+    description: Administrative user directory and audited account status decisions
   - name: Instructor applications
     description: Student applications and administrative review
   - name: Instructors
@@ -70,6 +74,149 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [Admin users]
+      summary: Search and list users as administrator
+      description: |
+        Requires a current verified active admin session. Searches literal case-insensitive
+        prefixes of name or normalized email; regex syntax is treated as text. q is trimmed
+        and lowercased. Unknown query keys, arrays and control/format characters are rejected.
+        Sort is createdAt descending then id descending. The opaque signed cursor is bound
+        to q/role/status; retain those filters for the next page. Changing filters or rotating
+        the access-signing secret requires starting a new list. No total count is returned.
+        Pagination is a live directory, not a frozen snapshot of concurrent profile/status changes.
+        All outcomes use Cache-Control no-store. Both directory GETs share a per-user quota
+        configured by PRIVATE_READ_RATE_LIMIT_MAX/WINDOW_MS (default 120/minute).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: role
+          in: query
+          schema: { type: string, enum: [student, instructor, admin] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, suspended] }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Allowlisted user directory page
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserListResponse' }
+        '400':
+          description: VALIDATION_ERROR or INVALID_CURSOR, including a cursor from different filters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/users/{userId}:
+    get:
+      operationId: getAdminUser
+      tags: [Admin users]
+      summary: Read safe account details as administrator
+      description: |
+        No query parameters. Requires a current verified active admin session. Includes
+        createdAt/updatedAt, never password/reset/session tokens, private instructor profile,
+        financial data or internal security metadata. revision is the account status revision,
+        independent of profile edits. All outcomes use Cache-Control no-store. Shares the
+        directory read quota across list and detail requests, regardless of target id.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminUserId' }]
+      responses:
+        '200':
+          description: Allowlisted user details
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/users/{userId}/status:
+    patch:
+      operationId: changeAdminUserStatus
+      tags: [Admin users]
+      summary: Suspend or reactivate an account with an audit reason
+      description: |
+        Requires a current verified active admin session, rechecked and fenced inside the
+        transaction. No query parameters or extra body fields. Does not edit roles, email,
+        verification, purchases, progress, instructor approval or financial obligations.
+        Self-suspension is forbidden. A shared database guard protects concurrent admin
+        decisions; at least one verified active admin must remain. A real status change
+        atomically advances status/token versions, revokes refresh sessions, and appends audit.
+        Reactivation never revives old tokens; the user must log in again and verify if needed.
+        Supply the revision from the latest directory/detail response. A matching-revision
+        same-status request returns 200 with an explicit no-op message and no additional
+        status/token version or audit change. A stale revision returns 409 even if the desired
+        state already matches; reload before deciding. This endpoint has no Idempotency-Key.
+        User-wide write quota uses ADMIN_WRITE_RATE_LIMIT_MAX/WINDOW_MS (default 30/minute).
+        All outcomes use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminUserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserStatusInput' }
+            example:
+              status: suspended
+              reason: Account suspended after a documented security review
+              expectedRevision: 0
+      responses:
+        '200':
+          description: Committed status change, or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, SELF_SUSPENSION_NOT_ALLOWED, LAST_ACTIVE_ADMIN, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: JSON body exceeds the one-megabyte limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /users/me/courses/{courseId}/lessons/{lessonId}/progress:
     put:
       operationId: setLessonCompletion
@@ -1871,6 +2018,11 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
 components:
   parameters:
+    AdminUserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
     OrderId:
       name: orderId
       in: path
@@ -1994,6 +2146,73 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, roles, status, instructorStatus, revision]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        name: { type: string }
+        email: { type: string, format: email }
+        roles: { type: array, items: { type: string, enum: [student, instructor, admin] } }
+        status: { type: string, enum: [active, suspended] }
+        instructorStatus: { type: string, enum: [none, pending, approved, rejected] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminUserStatusInput:
+      type: object
+      additionalProperties: false
+      required: [status, reason, expectedRevision]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+        reason:
+          type: string
+          minLength: 10
+          maxLength: 500
+          description: Trimmed plain text; control and Unicode format characters are rejected before trimming
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    AdminUserResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        message: { type: string }
+        data:
+          type: object
+          additionalProperties: false
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [users, pagination]
+          properties:
+            users: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminUser' } }
+            pagination:
+              type: object
+              additionalProperties: false
+              required: [nextCursor, hasMore]
+              properties:
+                nextCursor: { type: [string, 'null'], maxLength: 1024 }
+                hasMore: { type: boolean }
     ProgressSummary:
       type: object
       additionalProperties: false

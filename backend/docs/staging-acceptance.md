@@ -49,6 +49,9 @@ resolve them through an audited repair plan. Never disable an index merely to st
 
 Use `seed:admin` with explicit private credentials and `seed:categories` for baseline data.
 Seeds target the configured application database, **not automatically the test database**.
+Admin seed refuses suspended accounts. For an existing active admin it preserves roles
+and rotates credentials with session/reset-token invalidation; use the audited admin status
+API for reactivation. Do not use bootstrap credentials as a status-management shortcut.
 Do not run them until its identity is confirmed. Create all other demo records through the API:
 
 1. Register and verify four different controlled mailboxes: instructor applicant, paid

@@ -8,6 +8,12 @@ read-only legacy diagnostic. See [S3-02 implementation and verification](docs/sp
 This Story adds no HTTP endpoints, active policy, eligibility worker or provider calls;
 existing OpenAPI/frontend contracts remain unchanged.
 
+S3-03 adds admin-only `GET /api/v1/admin/users`, `GET /api/v1/admin/users/:userId`
+and `PATCH /api/v1/admin/users/:userId/status`. It includes bounded search/cursors, safe
+DTOs, audited status revisions, transactional session revocation and concurrent admin
+protection. See [S3-03 behavior and verification](docs/sprint_3_admin_users.md).
+The local OpenAPI/frontend handoff now include these operations; Staging acceptance remains pending.
+
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)
@@ -354,7 +360,7 @@ Production requires HTTPS `EMAIL_VERIFICATION_URL` and `PASSWORD_RESET_URL` valu
 | `npm run providers:proof:live -- --execute` | Run the guarded provider smoke test against dedicated Test/Staging accounts |
 | `npm run migrate:sprint2-content` | Dry-run the idempotent S2-02 legacy-data migration |
 | `npm run migrate:sprint2-content -- --apply` | Apply the reviewed S2-02 legacy-data migration |
-| `npm run seed:admin` | Idempotently create or normalize the first admin |
+| `npm run seed:admin` | Create the first admin or rotate an active admin's credentials; preserve other roles and refuse suspended admins |
 | `npm run seed:categories` | Idempotently create the initial categories |
 
 ## Architecture

@@ -25,6 +25,8 @@ import { PayoutItem } from './src/models/PayoutItem.js';
 import { InstructorFinanceState } from './src/models/InstructorFinanceState.js';
 import { FinancialHold } from './src/models/FinancialHold.js';
 import { AdminAuditEvent } from './src/models/AdminAuditEvent.js';
+import { AdminSecurityState } from './src/models/AdminSecurityState.js';
+import { User } from './src/models/User.js';
 import { logger, serializeError } from './src/config/logger.js';
 import { closeHttpServer } from './src/services/shutdown.service.js';
 import { startHttpServer } from './src/services/startup.service.js';
@@ -46,6 +48,7 @@ async function startServer() {
         Order.init(), Payment.init(), Enrollment.init(), LessonProgress.init(), EarningEntry.init(), WebhookEvent.init(),
         FinancialPolicyVersion.init(), Refund.init(), Payout.init(), PayoutItem.init(),
         InstructorFinanceState.init(), FinancialHold.init(), AdminAuditEvent.init(),
+        User.init(), AdminSecurityState.init(),
       ]);
     },
     signal: startupController.signal,
