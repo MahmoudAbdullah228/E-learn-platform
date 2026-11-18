@@ -11,6 +11,8 @@ import { ApiError } from '../../utils/ApiError.js';
 import { splitCourseRevenue } from '../../utils/money.js';
 import { toCheckoutOrder } from './checkout.presenter.js';
 import { publicCourseFilter } from '../courses/courseAccess.policy.js';
+import { FinancialPolicyVersion } from '../../models/FinancialPolicyVersion.js';
+import { env } from '../../config/env.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 const leaseMs = 120_000;
@@ -38,7 +40,7 @@ function assertSessionMatches(session, order, payment) {
 }
 
 export function createCheckoutService({ provider, clock = () => new Date(),
-  shutdownTimeoutMs = 10_000 }) {
+  shutdownTimeoutMs = 10_000, requireFinancialPolicy = env.REFUND_PROCESSING_ENABLED }) {
   const transaction = work => mongoose.connection.transaction(work, transactionOptions);
   const controller = new AbortController();
   const { signal } = controller;
@@ -99,10 +101,17 @@ export function createCheckoutService({ provider, clock = () => new Date(),
         + Math.min(settings.checkoutExpiresSeconds + 120, 86_400);
       const orderId = new mongoose.Types.ObjectId();
       const idempotencyKey = `checkout:${orderId}`;
+      const createdAt = clock();
+      const policy = await FinancialPolicyVersion.findOne({ effectiveFrom: { $lte: createdAt } })
+        .sort({ effectiveFrom: -1 }).session(session);
+      if (policy) await policy.validate();
+      if (requireFinancialPolicy && !policy) throw new ApiError(503, 'FINANCIAL_POLICY_NOT_CONFIGURED',
+        'A reviewed financial policy must be activated before checkout');
       const [order] = await Order.create([{ _id: orderId, studentId, courseId,
         instructorId: course.instructorId, courseTitleSnapshot: course.title,
         amountMinor: course.priceMinor, currency: course.currency,
         ...splitCourseRevenue(course.priceMinor), expiresAt: new Date(expiresAtSeconds * 1000),
+        createdAt, policyVersionId: policy?._id ?? null, refundWindowSeconds: policy?.refundWindowSeconds ?? null,
       }], { session });
       signal.throwIfAborted();
       const [payment] = await Payment.create([{ orderId, amountMinor: order.amountMinor,

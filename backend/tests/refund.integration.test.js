@@ -27,9 +27,12 @@ import { createCheckoutService } from '../src/modules/checkout/checkout.service.
 import { createPaymentInboxService } from '../src/modules/payments/paymentInbox.service.js';
 import { createRefundService } from '../src/modules/refunds/refund.service.js';
 import { createRefundIssuanceService } from '../src/modules/refunds/refundIssuance.service.js';
+import { createRefundReservationService } from '../src/modules/refunds/refundReservation.service.js';
 import { createFinanceFoundationService } from '../src/modules/finance/finance.service.js';
 import { inspectFinancialFoundation } from '../src/modules/finance/financeReadiness.service.js';
 import { createPaymentWebhookWorker } from '../src/services/paymentWebhookWorker.service.js';
+import { createRefundRecoveryWorker } from '../src/services/refundRecoveryWorker.service.js';
+import { createRefundInboxService } from '../src/modules/refunds/refundInbox.service.js';
 import { createStripePaymentProvider } from '../src/services/stripePayment.service.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 
@@ -114,6 +117,73 @@ function newService(options = {}) {
 }
 const command = (f, key, input = { reason }) => ({ auth: f.admin.auth, orderId: f.order.id, idempotencyKey: key, input });
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return { resolve, promise }; }
+
+function currentRefund(input) {
+  return { kind: 'refund', providerRefundId: `re_${input.refundId}`, paymentIntentId: input.paymentIntentId,
+    amountMinor: input.amountMinor, currency: input.currency, providerStatus: 'succeeded', providerCreatedAt: new Date(now),
+    correlation: { refundId: input.refundId, orderId: input.orderId, paymentId: input.paymentId }, metadataConflict: false,
+    payment: { id: input.paymentIntentId, amountMinor: input.amountMinor, amountReceivedMinor: input.amountMinor,
+      currency: input.currency, orderId: input.orderId, status: 'succeeded', livemode: false } };
+}
+
+test('a trusted success event arriving before the issuance response binds the reserved refund and wins over the stale response', async () => {
+  const f = await fixture();
+  behavior = async input => {
+    const current = currentRefund(input);
+    await createRefundInboxService({ clock: () => new Date(now) }).recordObservation(current);
+    const worker = createPaymentWebhookWorker({ provider: { async retrieveRefundObservation() { return current; } }, clock: () => new Date(now) });
+    try { await worker.processNext(); } finally { await worker.stop(); }
+    return evidence(input);
+  };
+  const result = await newService().create(command(f, randomUUID()));
+  assert.equal(result.status, 'requested'); assert.equal(calls.length, 1);
+  assert.equal((await Refund.findById(result.id)).status, 'succeeded');
+  assert.equal((await Order.findById(f.order.id)).status, 'refunded');
+  assert.equal(await Refund.countDocuments(), 1); assert.equal(await FinancialHold.countDocuments({ resolvedAt: null }), 0);
+});
+
+test('lost-response recovery scans after 24 hours without repeating the financial POST and finalizes matching provider evidence', async () => {
+  const f = await fixture(); let original;
+  behavior = async input => { original = currentRefund(input); throw new Error('lost network response'); };
+  const accepted = await newService().create(command(f, randomUUID()));
+  now = new Date(now.getTime() + 25 * 3600_000);
+  let scans = 0;
+  const recoveringProvider = { ...provider, async scanRefundObservations() { scans++; return [original]; },
+    async retrieveRefundObservation() { return original; } };
+  const recovery = createRefundRecoveryWorker({ provider: recoveringProvider, clock: () => new Date(now), issuanceEnabled: true }); services.push(recovery);
+  await Promise.all([recovery.processNext(), recovery.processNext()]);
+  assert.equal(scans, 1); assert.equal(calls.length, 1);
+  const worker = createPaymentWebhookWorker({ provider: recoveringProvider, clock: () => new Date(now) });
+  try { await worker.processNext(); } finally { await worker.stop(); }
+  assert.equal((await Refund.findById(accepted.id)).status, 'succeeded');
+  assert.equal((await Enrollment.findById(f.enrollment.id)).status, 'revoked');
+});
+
+test('an unknown dispatched outcome remains held after a complete empty scan, without resending', async () => {
+  const f = await fixture(); behavior = async () => { throw new Error('unknown outcome'); };
+  const accepted = await newService().create(command(f, randomUUID()));
+  now = new Date(now.getTime() + 25 * 3600_000);
+  const recovery = createRefundRecoveryWorker({ provider: { ...provider, async scanRefundObservations() { return []; } },
+    clock: () => new Date(now), issuanceEnabled: true }); services.push(recovery);
+  await recovery.processNext(); const row = await Refund.findById(accepted.id);
+  assert.equal(row.status, 'requires_reconciliation'); assert.equal(row.failureCode, 'REFUND_OUTCOME_UNKNOWN');
+  assert.equal(calls.length, 1); assert.equal(await FinancialHold.countDocuments({ resolvedAt: null }), 1);
+  assert.equal((await Order.findById(f.order.id)).status, 'paid');
+});
+
+test('crash-before-dispatch recovery honors the admission flag and cross-worker lease before one first issuance', async () => {
+  const f = await fixture();
+  const reserve = createRefundReservationService({ provider, finance: createFinanceFoundationService({ clock: () => new Date(now) }),
+    clock: () => new Date(now), signal: new AbortController().signal });
+  const reserved = await reserve(command(f, randomUUID()));
+  const disabled = createRefundRecoveryWorker({ provider, clock: () => new Date(now), issuanceEnabled: false }); services.push(disabled);
+  assert.equal(await disabled.processNext(), false); assert.equal(calls.length, 0);
+  const left = createRefundRecoveryWorker({ provider, clock: () => new Date(now), issuanceEnabled: true });
+  const right = createRefundRecoveryWorker({ provider, clock: () => new Date(now), issuanceEnabled: true }); services.push(left, right);
+  await Promise.all([left.processNext(), right.processNext()]);
+  assert.equal(calls.length, 1); assert.equal((await Refund.findById(reserved.refund.id)).status, 'pending');
+  assert.equal((await Refund.findById(reserved.refund.id)).attempts, 1);
+});
 
 test('refund routes enforce current verified admin sessions, strict payloads/keys/queries and no-store errors', async () => {
   const f = await fixture();
@@ -249,7 +319,7 @@ test('provider timeout/lost response stays held for reconciliation; replay never
   assert.equal(JSON.stringify(current.body).includes('private raw'), false);
 });
 
-test('even provider succeeded/failed responses await the S3-06 reducer without premature success, hold release or access revocation', async () => {
+test('provider issuance responses alone never finalize money, release a hold or revoke access', async () => {
   const f = await fixture(); behavior = async input => ({ ...evidence(input), status: 'succeeded' });
   const accepted = await newService().create(command(f, randomUUID()));
   const stored = await Refund.findById(accepted.id).select('+providerStatus');
@@ -386,11 +456,11 @@ test('refund write/read quotas are shared across targets and storage failure hap
   assert.equal(await Refund.countDocuments(), 1); assert.equal(calls.length, 1);
 });
 
-test('normal checkout and signed webhook fulfillment fail closed on refund admission until G03 policy/confirmation snapshot is attached', async () => {
+test('checkout freezes the active policy and signed success event supplies trusted deadlines for refund admission', async () => {
   const admin = await actor();
   const instructor = await actor(['instructor']);
   const student = await actor(['student']);
-  await FinancialPolicyVersion.create({ version: `test-${randomUUID()}`,
+  const policy = await FinancialPolicyVersion.create({ version: `test-${randomUUID()}`,
     effectiveFrom: new Date(now.getTime() - 19 * 86400_000), approvedAt: new Date(now.getTime() - 20 * 86400_000),
     refundWindowSeconds: 14 * 86400, refundMode: 'full', lateAdminOverrideAllowed: true,
     eligibilityRule: 'after_refund_window_without_holds', approvalSource: 'product_delegation', approvalReference: 'test-approval' });
@@ -457,31 +527,26 @@ test('normal checkout and signed webhook fulfillment fail closed on refund admis
 
   assert.equal(fulfilledOrder.status, 'paid');
   assert.ok(fulfilledOrder.paidAt instanceof Date);
-  assert.equal(fulfilledOrder.policyVersionId, null);
-  assert.equal(fulfilledOrder.refundWindowSeconds, null);
-  assert.equal(fulfilledOrder.paymentConfirmedAt, null);
-  assert.equal(fulfilledOrder.refundDeadlineAt, null);
+  assert.equal(String(fulfilledOrder.policyVersionId), policy.id);
+  assert.equal(fulfilledOrder.refundWindowSeconds, 14 * 86400);
+  assert.equal(fulfilledOrder.paymentConfirmedAt.getTime(), Math.floor(now.getTime() / 1000) * 1000);
+  assert.equal(fulfilledOrder.refundDeadlineAt.getTime(), fulfilledOrder.paymentConfirmedAt.getTime() + 14 * 86400_000);
 
   assert.equal(fulfilledPayment.status, 'succeeded');
   assert.equal(fulfilledPayment.paymentIntentId, `pi_${orderId}`);
-  assert.equal(fulfilledPayment.paymentConfirmedAt, null);
+  assert.equal(fulfilledPayment.paymentConfirmedAt.getTime(), fulfilledOrder.paymentConfirmedAt.getTime());
 
   assert.equal(fulfilledSale.status, 'pending');
-  assert.equal(fulfilledSale.policyVersionId, null);
-  assert.equal(fulfilledSale.eligibleAt, null);
+  assert.equal(String(fulfilledSale.policyVersionId), policy.id);
+  assert.equal(fulfilledSale.eligibleAt.getTime(), fulfilledOrder.refundDeadlineAt.getTime());
   assert.equal(fulfilledEnrollment.status, 'active');
 
   const diagnostic = await inspectFinancialFoundation();
-  assert.deepEqual(diagnostic.findings, [{
-    orderId,
-    reasonCodes: ['MISSING_POLICY', 'MISSING_CONFIRMATION', 'DEADLINE_REQUIRES_REVIEW'],
-  }]);
+  assert.deepEqual(diagnostic.findings, []);
 
-  await assert.rejects(
-    newService({ provider: stripeProvider }).create({ auth: admin.auth, orderId, idempotencyKey: randomUUID(), input: { reason } }),
-    { statusCode: 409, code: 'FINANCIAL_RECONCILIATION_REQUIRED' },
-  );
-  assert.equal(await Refund.countDocuments(), 0);
-  assert.equal(await FinancialHold.countDocuments(), 0);
+  const accepted = await newService({ provider: stripeProvider }).create({ auth: admin.auth, orderId, idempotencyKey: randomUUID(), input: { reason } });
+  assert.equal(accepted.status, 'requested');
+  assert.equal(await Refund.countDocuments(), 1);
+  assert.equal(await FinancialHold.countDocuments({ resolvedAt: null }), 1);
   assert.equal(calls.length, 0);
 });

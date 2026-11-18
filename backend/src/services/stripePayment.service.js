@@ -3,6 +3,7 @@ import Stripe from 'stripe';
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
 import { createStripeRefundAdapter } from './stripeRefund.adapter.js';
+import { createStripeRefundEvidenceAdapter } from './stripeRefundEvidence.adapter.js';
 
 function unavailable() {
   return new ApiError(503, 'PAYMENT_PROVIDER_UNAVAILABLE',
@@ -71,8 +72,7 @@ export function createStripePaymentProvider({
   webhookToleranceSeconds = env.STRIPE_WEBHOOK_TOLERANCE_SECONDS,
   apiTimeoutMs = env.STRIPE_API_TIMEOUT_MS,
   checkoutExpiresSeconds = env.STRIPE_CHECKOUT_EXPIRES_SECONDS,
-  // Enable only when S3-06's atomic financial/access reducer and recovery are deployed.
-  refundIssuanceEnabled = false,
+  refundIssuanceEnabled = env.REFUND_PROCESSING_ENABLED,
   stripeClient,
 } = {}) {
   const stripe = stripeClient ?? (secretKey
@@ -82,6 +82,7 @@ export function createStripePaymentProvider({
 
   return Object.freeze({
     ...createStripeRefundAdapter({ stripe, secretKey, apiTimeoutMs, refundIssuanceEnabled }),
+    ...createStripeRefundEvidenceAdapter({ stripe, secretKey, apiTimeoutMs }),
     checkoutSettings() {
       if (!configured) throw unavailable();
       return { successUrl, cancelUrl, checkoutExpiresSeconds };

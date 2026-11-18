@@ -47,6 +47,17 @@ test('startup fails clearly when MONGO_URI is missing', () => {
   assert.match(`${result.stdout}${result.stderr}`, /MONGO_URI is required/);
 });
 
+test('refund issuance is opt-in with strict boolean configuration and complete Test Mode settings', () => {
+  for (const value of ['yes', '1', '']) {
+    const result = importEnvironment({ REFUND_PROCESSING_ENABLED: value });
+    assert.notEqual(result.status, 0); assert.match(`${result.stdout}${result.stderr}`, /REFUND_PROCESSING_ENABLED/);
+  }
+  const missing = importEnvironment({ REFUND_PROCESSING_ENABLED: 'true' }, ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET',
+    'STRIPE_CHECKOUT_SUCCESS_URL', 'STRIPE_CHECKOUT_CANCEL_URL']);
+  assert.notEqual(missing.status, 0); assert.match(`${missing.stdout}${missing.stderr}`, /Refund processing requires complete Stripe/);
+  assert.equal(importEnvironment({ ...productionAuth, REFUND_PROCESSING_ENABLED: 'true' }).status, 0);
+});
+
 test('protected media lifetimes cannot exceed the Sprint 2 access policy', () => {
   for (const [key, value] of [['MUX_PLAYBACK_TOKEN_TTL_SECONDS', '901'],
     ['CLOUDINARY_DOWNLOAD_URL_TTL_SECONDS', '61']]) {

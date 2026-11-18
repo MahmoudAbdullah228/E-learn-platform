@@ -28,6 +28,8 @@ const schema = new mongoose.Schema({
     default: 'created', required: true },
   paidAt: { type: Date, default: null },
   paymentConfirmedAt: { type: Date, default: null },
+  providerRefundedAmountMinor: { type: Number, default: null, min: 0, max: Number.MAX_SAFE_INTEGER,
+    select: false, validate: value => value == null || Number.isSafeInteger(value) },
   checkoutRequest: { type: checkoutRequest, required: true, immutable: true, select: false },
   checkoutLeaseId: { type: String, default: null, select: false },
   checkoutLeaseUntil: { type: Date, default: null, select: false },

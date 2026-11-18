@@ -21,10 +21,15 @@ unblock never republishes or repairs unavailable media. See [S3-04 contract and 
 Local OpenAPI is 1.2.0; no unarchive or destructive course-delete API is introduced.
 
 S3-05 adds durable admin refund request/read contracts, scoped holds, replay protection and
-a tested bounded Stripe refund adapter. The default application provider keeps refund
-issuance disabled pending S3-06 atomic finalization/recovery; this is not an `.env` toggle.
+a tested bounded Stripe refund adapter. The application keeps new refund
+issuance disabled by default (`REFUND_PROCESSING_ENABLED=false`).
 Legacy financial evidence is never inferred from paidAt. See [S3-05 scope and verification](docs/sprint_3_refund_requests.md).
-Local OpenAPI is now 1.3.0. No final refund accounting/access effect is activated by this Story.
+S3-06 adds provider-confirmed atomic refund accounting/access, external financial-event
+holds and bounded recovery using the existing inbox. New Checkout freezes a reviewed
+active policy when present; trusted signed success-event time supplies confirmation and
+deadlines. No legacy backfill or policy activation runs automatically. See
+[S3-06 implementation and operations](docs/sprint_3_refund_finalization.md).
+Local OpenAPI is **1.4.0** (61 paths). Repurchase/eligibility/payout operations remain later stories.
 
 ## Requirements
 
@@ -340,6 +345,7 @@ See `docs/frontend-handoff.md` for the integration flow and error handling.
 | `STRIPE_CHECKOUT_EXPIRES_SECONDS` | Hosted Checkout expiry, default 1800 seconds |
 | `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | Signature timestamp tolerance, default 300 seconds |
 | `STRIPE_API_TIMEOUT_MS` | Stripe SDK request timeout, default 10000 ms |
+| `REFUND_PROCESSING_ENABLED` | Strict true/false, default false; enables first Test refund issuance only after reviewed policy/acceptance. External financial event processing remains active. |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | Per-IP authentication rate-limit window |
 | `REGISTER_RATE_LIMIT_MAX` | Registration attempts allowed per window and IP |
 | `VERIFY_RATE_LIMIT_MAX` | Verification attempts allowed per window and IP |
@@ -367,6 +373,8 @@ Production requires HTTPS `EMAIL_VERIFICATION_URL` and `PASSWORD_RESET_URL` valu
 | `npm test` | Run serial Node.js and Supertest suites against the test database |
 | `npm run lint` | Run ESLint |
 | `npm run docs:check` | Validate the required OpenAPI structure |
+| `npm run payments:events -- --event-id <id>` | Dry-run; add `--execute` for authenticated event recovery or `--replay --execute` for a reviewed failed inbox job |
+| `npm run refunds:reconcile -- --refund-id <id>` | Dry-run; `--execute` reads one provider outcome into the same inbox, never issues another refund |
 | `npm run staging:status` | Dry-run read-only operational snapshot; `-- --execute` reads aggregate DB counts |
 | `npm run verify` | Run lint, contract validation, and all tests |
 | `npm run providers:proof:live -- --execute` | Run the guarded provider smoke test against dedicated Test/Staging accounts |

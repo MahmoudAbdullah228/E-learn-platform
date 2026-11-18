@@ -1,5 +1,11 @@
 # S3-05 — Durable full-refund requests and Stripe adapter
 
+Historical S3-05 snapshot. S3-06 now supplies the reducer/events/recovery and replaces
+the code-only gate with validated `REFUND_PROCESSING_ENABLED=false` (default).
+New Checkout/fulfillment attach policy/confirmation when a reviewed active policy exists.
+No policy is automatically activated. Current behavior and evidence:
+[S3-06 implementation](sprint_3_refund_finalization.md).
+
 Date: 2026-11-18. Branch: `feature/sprint-3-mvp-closure`. Sources: MVP refund flow,
 [financial ADR](adr-0006-financial-integrity-and-settlements.md),
 [policy register P01–P09](sprint_3_policy_register.md) and the Sprint 3 contract.

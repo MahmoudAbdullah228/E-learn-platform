@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.3.0
+  version: 1.4.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -26,9 +26,11 @@ info:
     Archived courses retain active learner access but reject discovery, preview and new enrollment.
     Access blocks deny new credentials for learners and reviewers alike; unblock never republishes.
     S3-05 adds durable admin full-refund request/read contracts and a tested Stripe adapter.
-    Application Stripe refund issuance remains disabled until S3-06 atomic finalization/recovery.
+    S3-06 adds signed refund/charge/dispute events, atomic full-refund accounting/access,
+    bounded read-only recovery, and policy/confirmation snapshots on new paid purchases.
+    REFUND_PROCESSING_ENABLED defaults to false; explicit operator activation and reviewed policy are required.
     Legacy orders without frozen policy/trusted confirmation are never guessed from paidAt.
-    Final refund accounting/access effects and payouts remain later stories.
+    Repurchase, earnings eligibility and payout operations remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -54,7 +56,7 @@ tags:
   - name: Course administration
     description: Audited course archive and legal/security access policy
   - name: Refunds
-    description: Durable full-refund reservations and safe admin reads; monetary activation awaits S3-06
+    description: Durable full-refund reservations, safe reads and asynchronous provider-confirmed accounting; opt-in Test Mode issuance
   - name: Instructor applications
     description: Student applications and administrative review
   - name: Instructors
@@ -92,9 +94,9 @@ paths:
       description: |
         Requires a current verified active admin, rechecked inside the financial transaction.
         The default application Stripe provider returns 503 REFUND_PROCESSING_NOT_ENABLED
-        until S3-06 finalization/recovery is integrated; there is no environment toggle or
-        client bypass. The following accepted behavior is implemented/tested through an
-        enabled injected provider. No query parameters or client monetary/provider fields.
+        while REFUND_PROCESSING_ENABLED=false (default). Activation is an operator decision,
+        requires complete Stripe Test Mode configuration and a reviewed frozen policy;
+        no client bypass. No query parameters or client monetary/provider fields.
         Idempotency-Key is required (16-128 ASCII letters/digits/dot/underscore/hyphen),
         scoped to actor/refund-create. Same key and normalized order/reason/override returns
         the original 202 requested receipt, even if current state changed. Changed intent
@@ -107,7 +109,11 @@ paths:
         Reservation, scoped financial hold and audit commit before any provider call. A bounded
         single issuance attempt uses a separate stored server key; pending/unknown results
         retain the hold. HTTP 202 means durable acceptance, never money returned. Even provider
-        success waits for the S3-06 atomic financial/access reducer before local succeeded.
+        success waits for authenticated current provider evidence and the atomic financial/access reducer.
+        Full success marks Order/Payment refunded, releases the purchase slot, revokes only
+        the matching active enrollment, and reverses the sale or records settlement debt.
+        External partial refunds/disputes retain review holds without asserting a full refund.
+        Repurchase support remains a later story; a released slot alone does not reactivate access.
         There is no refund retry/cancel/complete endpoint here. All outcomes are no-store.
         Per-user write quota uses ADMIN_WRITE_RATE_LIMIT settings (default 30/minute).
       security: [{ bearerAuth: [] }]
@@ -635,6 +641,9 @@ paths:
         before allocation allows replacement. Cancel/success
         redirects do not change payment state. Only the durable verified Stripe event worker
         can confirm payment, enroll the buyer, and record pending instructor earnings.
+        New Checkout freezes the active financial policy when configured. When refund issuance
+        is enabled, missing reviewed policy returns 503 FINANCIAL_POLICY_NOT_CONFIGURED
+        before a new order/provider session is created. No legacy policy is inferred.
       tags: [Checkout]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/CourseId' }]
@@ -2004,11 +2013,20 @@ paths:
         Send the original uncompressed JSON bytes, at most 1 MiB, with Stripe-Signature.
         No JWT or browser/user rate limiter. Test Mode, platform-account snapshot events only.
         Supported types are checkout.session.completed, checkout.session.async_payment_succeeded,
-        checkout.session.async_payment_failed, and checkout.session.expired.
+        checkout.session.async_payment_failed, checkout.session.expired, refund.created,
+        refund.updated, refund.failed, charge.refunded, charge.dispute.created,
+        charge.dispute.updated, charge.dispute.closed, charge.dispute.funds_withdrawn,
+        and charge.dispute.funds_reinstated. Subscribe to all 13 snapshot types.
         Unsupported valid events are retained as ignored with no financial effects.
         HTTP 200 acknowledges durable receipt, NOT fulfillment. Duplicates never reopen
         processed/failed events. A worker validates current provider evidence and atomically
         confirms Order/Payment, Enrollment, pending EarningEntry, and the event itself.
+        New purchases freeze the active financial policy at Checkout and derive deadlines
+        from the trusted success-event created timestamp; late duplicates never move them.
+        Refund success updates Refund/Order/Payment/ledger/source-bound enrollment/audit and
+        the inbox atomically. Known-payment financial receipts open a guard-serialized hold.
+        Disputes and external partials remain held for operational review; closed is not an
+        automatic hold-release instruction. Financial receipts are processed even when issuance is disabled.
         Never call this endpoint from the frontend or treat a redirect as payment proof.
       security: []
       parameters:

@@ -1,4 +1,4 @@
-# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-05
+# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-06
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 For coordinated Sprint 2 acceptance, use [the staging runbook](staging-acceptance.md)
@@ -9,7 +9,7 @@ set your client's backend origin explicitly. JSON request bodies require `Conten
 
 | Method | Path | Request | Success |
 | --- | --- | --- | --- |
-| POST | `/admin/orders/:orderId/refunds` | Admin Bearer + Idempotency-Key + `{reason,overrideWindow?}` | 202 `{data:{refund},message}` when enabled; default provider 503 until S3-06 |
+| POST | `/admin/orders/:orderId/refunds` | Admin Bearer + Idempotency-Key + `{reason,overrideWindow?}` | 202 `{data:{refund},message}` when enabled; 503 while issuance is disabled |
 | GET | `/admin/refunds` | Admin Bearer + optional status/orderId/cursor/limit | 200 `{data:{refunds,pagination}}` |
 | GET | `/admin/refunds/:refundId` | Admin Bearer; no query | 200 `{data:{refund}}` |
 | POST | `/admin/courses/:courseId/archive` | Admin Bearer; `{reason,expectedRevision}` | 200, `{data:{course},message}` |
@@ -274,12 +274,13 @@ Create a course with `title`, `categoryId`, `description`, and integer `priceMin
 
 Use `GET /instructor/courses` for the dashboard and `GET /instructor/courses/:courseId` for the owner's course details. The list defaults to drafts and accepts a status filter; detail reads work in every state. PATCH is partial, requires at least one editable field, and works only in draft. A title change does not change the slug. `category` can be `null` if its original database record was deleted; retain `categoryId` and prompt the instructor to choose an active category. Prices are returned in the smallest EGP unit and should be formatted for display without floating-point persistence.
 
-## S3-05 — Durable refund request/read contracts
+## S3-05 / S3-06 — Durable refunds and provider-confirmed finalization
 
-The current local specification is OpenAPI **1.3.0**. Default application Stripe monetary
-issuance is disabled: POST returns `503 REFUND_PROCESSING_NOT_ENABLED` until S3-06 atomic
-finalization/recovery is integrated. This is a code capability boundary, not a missing env
-value. Do not publish a working "refund completed" flow based on S3-05 alone.
+The current local specification is OpenAPI **1.4.0**. Stripe monetary issuance defaults to
+disabled: POST returns `503 REFUND_PROCESSING_NOT_ENABLED` while the operator's
+`REFUND_PROCESSING_ENABLED` is false. Activation requires complete Test Mode settings,
+an explicitly reviewed/activated immutable policy and separate Staging acceptance.
+There is no frontend bypass. Financial webhooks still process genuine provider facts with issuance disabled.
 
 When enabled, send `POST /admin/orders/:orderId/refunds` as an active verified admin with
 one fresh random `Idempotency-Key` (16–128 ASCII letters/digits/._-) per intentional request:
@@ -297,9 +298,14 @@ revoked. Display "Request accepted" and poll current state rather than trusting 
 fixed `status=requested`. Creation and GET DTOs intentionally differ.
 
 GET `/admin/refunds/:refundId` returns id/orderId/amountMinor/EGP/status/createdAt/updatedAt/
-completedAt/failureCode. pending may include provider evidence awaiting S3-06 finalization;
-requires_reconciliation needs operational review. No completion/access change is performed
-by S3-05. Provider failures do not automatically release a hold or authorize another request.
+completedAt/failureCode. `pending` waits for authoritative finalization;
+`requires_reconciliation` needs operational review. `succeeded` means the full-refund
+transaction committed: Order/Payment are refunded, the old purchase slot is released,
+the matching active enrollment is revoked and the ledger is accounted. `completedAt` is
+local accounting completion time. External partial refunds/disputes remain held for review.
+`failed`/`cancelled` require authenticated non-success evidence; network errors are not proof.
+Do not offer repurchase yet: its enrollment-reactivation flow belongs to S3-07.
+Already issued media credentials may survive their short TTL (video up to 15 min, PDF up to 60 sec).
 Reasons, actor, payment/provider IDs, keys, leases and raw errors are not exposed in these DTOs.
 
 GET `/admin/refunds` uses optional status/orderId/limit (1–100/default20) and signed cursor,
@@ -314,6 +320,7 @@ REFUND_WINDOW_EXPIRED, REFUND_OVERRIDE_NOT_ALLOWED and FINANCIAL_RECONCILIATION_
 Legacy orders missing policy/trusted confirmation cannot be fixed by the frontend, and
 paidAt must not be used to fabricate the refund deadline. Standard window is policy-bound;
 an allowed explicit override affects time only. See [S3-05 details](sprint_3_refund_requests.md).
+Recovery and operational boundaries: [S3-06 details](sprint_3_refund_finalization.md).
 
 ## S3-04 — Archive and legal/security access
 

@@ -61,6 +61,7 @@ import { stripePaymentProvider } from './services/stripePayment.service.js';
 import { createPaymentInboxService } from './modules/payments/paymentInbox.service.js';
 import { createPaymentWebhookRouter } from './modules/payments/payment.routes.js';
 import { createPaymentWebhookWorker } from './services/paymentWebhookWorker.service.js';
+import { createRefundRecoveryWorker } from './services/refundRecoveryWorker.service.js';
 import { authenticate } from './middlewares/authenticate.js';
 import { noStore } from './middlewares/noStore.js';
 import { createAuthenticatedRateLimiter } from './middlewares/rateLimiter.js';
@@ -117,6 +118,8 @@ export function createApp({
   application.locals.checkoutService = checkoutService;
   const paymentInbox = createPaymentInboxService({ provider: paymentProvider });
   application.locals.paymentWebhookWorker = createPaymentWebhookWorker({ provider: paymentProvider,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.refundRecoveryWorker = createRefundRecoveryWorker({ provider: paymentProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
   const deliveryHandlers = Object.freeze({
     email_verification: authService.deliverVerificationRequest,

@@ -21,6 +21,9 @@ identifier alone does not identify uncommitted code. Do not test an unidentified
   Refer to `.env.example` and the provider ADR; never paste actual values into evidence.
 - Provider webhooks must reach the deployed API. Stripe uses `/api/v1/webhooks/stripe`;
   Mux uses `/api/v1/webhooks/video`. Preserve raw bytes and the provider signature header.
+  For an S3-06 deployment, configure all 13 Test snapshot types listed in the
+  [refund runbook](sprint_3_refund_finalization.md). Issuance stays disabled by default;
+  reviewed policy activation and Sprint 3 financial acceptance are separate requirements.
 - Agree an external asset budget, cleanup owner and test window before any real uploads.
   Mux test assets have short-lived proof limitations; do not claim long-course coverage.
 - Back up the staging database and record a restoration drill. Restrict operator CLI access.

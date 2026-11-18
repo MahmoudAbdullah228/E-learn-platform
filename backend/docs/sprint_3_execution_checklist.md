@@ -73,8 +73,8 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 | S3-02 | مكتملة محليًا؛ أساس داخلي فقط، دون HTTP/provider activation | 462 PASS + lint/OpenAPI؛ الفهارس وrollback/concurrency وفحص legacy؛ [الدليل](sprint_3_financial_foundation.md) |
 | S3-03 | مكتملة محليًا؛ 484 PASS + lint/OpenAPI | directory/status + audit/session fencing؛ [الدليل](sprint_3_admin_users.md)؛ B01 Staging لم ينفّذ |
 | S3-04 | مكتملة محليًا؛ 509 PASS + lint/OpenAPI | archive/access policy عبر جميع المسارات؛ [الدليل](sprint_3_course_access.md)؛ قبول B02 Staging لم ينفّذ |
-| S3-05 | مكتملة محليًا؛ 542 PASS + lint/OpenAPI؛ Stripe issuance معطلة لحين S3-06 | reservation/replay/hold/audit/provider boundary؛ [الدليل](sprint_3_refund_requests.md) |
-| S3-06 | لم تبدأ | signed events/replay/recovery والـledger متسقة |
+| S3-05 | مكتملة محليًا؛ baseline 542 PASS + lint/OpenAPI؛ issuance مقفولة افتراضيًا | reservation/replay/hold/audit/provider boundary؛ [الدليل](sprint_3_refund_requests.md) |
+| S3-06 | مكتملة محليًا؛ 577 PASS + lint/OpenAPI، 154.41 ثانية | signed events/recovery وatomic ledger/access؛ [الدليل](sprint_3_refund_finalization.md)؛ التفعيل وStaging منفصلان |
 | S3-07 | لم تبدأ | old refund لا يلغي repurchase جديدًا |
 | S3-08 | لم تبدأ | eligibility بالسياسة الأصلية، holds وcarry-forward صحيحان |
 | S3-09 | لم تبدأ | reservation واحدة، مجموع exact يتضمن الدين |
@@ -110,7 +110,9 @@ S3-04 محلية دون commit/push. التالي **S3-05**؛ B02 Staging لم �
 تحديث S3-05: اكتملت العقود المحمية للطلب/القراءة وStripe adapter وreservation/hold/
 audit/replay، مع تعطيل إصدار Stripe الفعلي لحين S3-06. المراجعة الكاملة **542 PASS**
 مع lint/OpenAPI، 145.01 ثانية، دون fail/skip/cancel. OpenAPI 1.3.0 وhandoff محدثان.
-S3-04/S3-05 ما زالا محليين دون commit/push؛ التالي **S3-06** للـreducer/events/recovery.
+S3-04/S3-05 رُفعا في commit `bedffc9`. تحديث لاحق: نُفّذ S3-06 محليًا للـreducer/events/recovery
+وسياسة Checkout ووقت التأكيد الموثوق؛ [الدليل الحالي](sprint_3_refund_finalization.md).
+تغييرات S3-06 لم تُرفع؛ التالي **S3-07**. الاختبارات المحلية لا تستبدل قبول Staging أو مراجعة مالية مؤهلة.
 
 1. Models/indexes، أو بيان عدم الحاجة لموديل/فهرس جديد؛ Zod request validation.
 2. Services/policies/adapters ثم controllers/routes/middlewares؛ لا provider call داخل transaction callback قابل للإعادة.

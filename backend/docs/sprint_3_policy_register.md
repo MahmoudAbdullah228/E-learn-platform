@@ -42,9 +42,10 @@ not a claim that text semantics can be perfectly validated automatically.
 
 ## 2. Time, policy activation and historical data
 
-- Current `paymentFulfillment.service.js` writes `paidAt` from its processing clock. That is
-  **not yet** trusted provider confirmation time and must not silently start the 14-day clock.
-- Add `paymentConfirmedAt` from validated authenticated successful Stripe event evidence,
+- `paidAt` remains the compatibility processing timestamp and never starts the 14-day clock.
+  S3-06 now records a separate trusted confirmation fact for new fulfillment; see
+  [implementation and rollout boundaries](sprint_3_refund_finalization.md).
+- `paymentConfirmedAt` comes from validated authenticated successful Stripe event evidence,
   corroborated by the current paid session/intent. Preserve existing `paidAt` compatibility
   and the inbox processedAt; document these timestamps separately in the contract.
 - `checkout.session.completed` while unpaid is not a successful confirmation. For supported

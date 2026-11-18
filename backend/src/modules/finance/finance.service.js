@@ -19,6 +19,7 @@ export function createFinanceFoundationService({ clock = () => new Date() } = {}
     }
   }
   async function initializeGuard(instructorId) {
+    await InstructorFinanceState.init();
     if (await InstructorFinanceState.exists({ instructorId })) return;
     try { await InstructorFinanceState.create({ instructorId }); }
     catch (error) {

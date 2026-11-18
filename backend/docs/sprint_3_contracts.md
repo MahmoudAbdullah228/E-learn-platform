@@ -1,6 +1,6 @@
 # Sprint 3 — S3-01 contract and schema handoff
 
-Date: 2026-11-18. Status: **S3-02 foundation through S3-05 guarded request/provider contracts implemented locally;
+Date: 2026-11-18. Status: **S3-02 foundation through S3-06 provider-confirmed refunds/recovery implemented locally;
 later Story contracts remain design only**.
 Precedence for selected product behavior: [policy register](sprint_3_policy_register.md).
 Architecture: [financial ADR](adr-0006-financial-integrity-and-settlements.md) and
@@ -12,7 +12,7 @@ defined by the served OpenAPI, now including the guarded S3-05 boundary. This fi
 S3-02 is implemented locally as an internal foundation, not a refund/payout HTTP release.
 The implementation, indexes, service interfaces and verification are recorded in
 [S3-02 evidence](sprint_3_financial_foundation.md). The following table defines its scope;
-S3-03 through S3-05 are implemented as noted below; S3-06 onward remain unimplemented design contracts.
+S3-03 through S3-06 are implemented as noted below; S3-07 onward remain unimplemented design contracts.
 
 | Layer | Foundation work | Must not do |
 | --- | --- | --- |
@@ -89,10 +89,11 @@ never changes archive or unavailableAt. There is no unarchive operation.
 ### S3-05 full refund request
 
 Implemented locally with [S3-05 evidence](sprint_3_refund_requests.md). Default application
-Stripe monetary issuance is disabled pending S3-06 finalization/recovery; new POST returns
-503 REFUND_PROCESSING_NOT_ENABLED. The acceptance/replay/provider behavior below is tested
-with enabled injected fake providers. No env switch, active policy/backfill or final money/
-access effect is introduced. Supported reads are live keyset pages by status/orderId with
+Stripe monetary issuance defaults to disabled (`REFUND_PROCESSING_ENABLED=false`); new POST
+returns 503 REFUND_PROCESSING_NOT_ENABLED. S3-06 now implements signed financial events,
+atomic ledger/access finalization and recovery through the existing inbox; see
+[implementation and activation boundaries](sprint_3_refund_finalization.md).
+No active policy or legacy backfill is introduced automatically. Supported reads are live keyset pages by status/orderId with
 limit 1–100/default20; opaque cursor binds those filters. Safe GET DTO adds updatedAt,
 completedAt and allowlisted failureCode to the accepted DTO, with current status.
 
@@ -108,14 +109,13 @@ completedAt and allowlisted failureCode to the accepted DTO, with current status
   Use status 409 for invalid state; role failures stay 403. Unknown provider outcome after
   durable acceptance is shown as pending/reconciliation, not a false "refund failed" 503.
 
-For refund events, retain the existing signed raw-body `/webhooks/stripe` route and durable
-inbox. Extend its discriminator/worker deliberately; do not pass Refund objects to the current
-checkout parser. Provider `succeeded` is distinct from creation/pending/requires_action.
+The existing signed raw-body `/webhooks/stripe` route/inbox now discriminate Checkout,
+Refund, Charge and Dispute evidence. Provider `succeeded` is distinct from creation/pending/requires_action.
 [Stripe Refund object](https://docs.stripe.com/api/refunds/object).
 
 ## 4. Downstream contracts / freeze gates
 
-The plan's route inventory remains the downstream target for S3-06–17. Before each owning
+The plan's route inventory remains the downstream target for S3-07–17. Before each owning
 Story starts, freeze its complete request/DTO/error/state examples using the ADR invariants:
 
 - S3-07: enrollment revocationReason + sourceOrder fencing, repurchase preserves progress;

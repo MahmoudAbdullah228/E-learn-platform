@@ -18,8 +18,11 @@ Its Staging B01/qualified-review acceptance remains open. S3-04 archive/access p
 covers the G10 implementation gap; [S3-04 evidence](sprint_3_course_access.md). Its B02
 Staging/qualified review remains open. S3-05 adds guarded reservation/read/provider contracts
 for G04 with [separate evidence](sprint_3_refund_requests.md). Its application issuance gate
-remains disabled; G03 trusted confirmation/policy integration and G04 final reducers/recovery
-remain for S3-06/08. Next Story is S3-06, not monetary feature acceptance.
+remains disabled by default. S3-06 now covers the G03 new-purchase confirmation/policy
+integration and G04 atomic finalization/recovery implementation; see
+[S3-06 evidence](sprint_3_refund_finalization.md). Legacy mapping, explicit policy activation,
+S3-08 eligibility, Staging and qualified financial review remain separate gates.
+Next Story is S3-07; the gap table below preserves the historical baseline.
 
 ## 1. New automated baseline — PASS
 

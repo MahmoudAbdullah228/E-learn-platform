@@ -1,7 +1,9 @@
 # ADR 0006 — Financial integrity, refunds and manual settlements
 
 Date: 2026-11-18. Status: **Accepted**. S3-02 internal foundation is implemented locally;
-refund/payout HTTP workflows and provider integration remain for their owning Stories.
+S3-05/S3-06 now implement guarded refund requests and provider-confirmed finalization/recovery;
+payout operator workflows and eligibility remain for their owning Stories. Current evidence:
+[refund finalization](sprint_3_refund_finalization.md). Context below preserves the original decision baseline.
 Product behavior: [policy register](sprint_3_policy_register.md). Contract draft:
 [S3-01 contracts](sprint_3_contracts.md). Source: MVP §9, BR03/04/07/08, financial schema
 and the trusted-webhook/manual-transfer flowchart.

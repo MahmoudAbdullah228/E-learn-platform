@@ -120,7 +120,7 @@ test('provider errors and wrong-mode configuration are safe and never include ra
   assert.throws(() => live.assertRefundReady(), { code: 'REFUND_PROVIDER_UNAVAILABLE' });
 });
 
-test('application Stripe factory keeps monetary refund issuance disabled until the S3-06 reducer/recovery is integrated', () => {
+test('application Stripe factory defaults monetary issuance to disabled until explicitly enabled', () => {
   const f = adapterFixture();
   const disabled = createStripePaymentProvider({ stripeClient: f.client, secretKey: 'sk_test_fixture' });
   assert.throws(() => disabled.assertRefundReady(), { code: 'REFUND_PROCESSING_NOT_ENABLED' });

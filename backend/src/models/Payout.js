@@ -27,6 +27,8 @@ const schema = new mongoose.Schema({
     required: true, default: 'not_started' },
   paidAt: { type: Date, default: null }, paidBy: financialReference('User', false),
   cancelledAt: { type: Date, default: null }, cancelledBy: financialReference('User', false),
+  cancellationSource: { type: String, enum: ['admin', 'refund', null], default: null },
+  cancelledByRefundId: financialReference('Refund', false),
   cancellationReason: { type: String, default: null, minlength: 10, maxlength: 500,
     validate: value => value == null || !containsUnsafeCharacter(value) },
 }, financialModelOptions);
@@ -39,7 +41,8 @@ schema.pre('validate', function validatePayout() {
   requireModelCondition(this, this.status !== 'paid' || (this.paidAt && this.paidBy
     && this.transferReference && this.transferOutcome === 'confirmed_paid'),
   'paidAt', 'Paid payouts require confirmed transfer evidence');
-  requireModelCondition(this, this.status !== 'cancelled' || (this.cancelledAt && this.cancelledBy
+  requireModelCondition(this, this.status !== 'cancelled' || (this.cancelledAt
+    && (this.cancelledBy || (this.cancellationSource === 'refund' && this.cancelledByRefundId))
     && this.cancellationReason && this.transferOutcome === 'confirmed_not_sent'),
   'cancelledAt', 'Cancellation requires a confirmed non-transfer and audit reason');
   requireModelCondition(this, this.status !== 'draft' || (!this.sealedAt && !this.sealedBy
@@ -48,15 +51,19 @@ schema.pre('validate', function validatePayout() {
   requireModelCondition(this, this.status === 'paid' || (!this.paidAt && !this.paidBy),
     'paidAt', 'Only paid payouts contain payment confirmation');
   requireModelCondition(this, this.status === 'cancelled'
-    || (!this.cancelledAt && !this.cancelledBy && !this.cancellationReason),
+    || (!this.cancelledAt && !this.cancelledBy && !this.cancellationReason && !this.cancellationSource && !this.cancelledByRefundId),
   'cancelledAt', 'Only cancelled payouts contain cancellation confirmation');
   requireModelCondition(this, this.status !== 'cancelled' || !this.transferReference,
     'transferReference', 'A cancelled payout cannot claim a successful transfer reference');
+  requireModelCondition(this, this.cancellationSource !== 'refund' || (this.cancelledByRefundId && !this.cancelledBy),
+    'cancellationSource', 'Refund cancellation requires system provenance');
+  requireModelCondition(this, !this.cancelledByRefundId || this.cancellationSource === 'refund',
+    'cancelledByRefundId', 'Refund cancellation identity requires its source');
 });
 protectFinancialHistory(schema, { immutableFields: ['instructorId', 'amountMinor', 'currency',
   'lineCount', 'periodStart', 'periodEnd', 'cutoffAt', 'createdBy', 'idempotencyKey', 'requestFingerprint'] });
 protectWriteOnce(schema, ['sealedAt', 'sealedBy', 'transferAttemptId', 'transferMethod', 'transferReference',
-  'paidAt', 'paidBy', 'cancelledAt', 'cancelledBy', 'cancellationReason']);
+  'paidAt', 'paidBy', 'cancelledAt', 'cancelledBy', 'cancellationReason', 'cancellationSource', 'cancelledByRefundId']);
 schema.index({ instructorId: 1, currency: 1 }, { unique: true,
   partialFilterExpression: { status: { $in: ['draft', 'pending'] } } });
 schema.index({ createdBy: 1, idempotencyKey: 1 }, { unique: true });

@@ -45,6 +45,10 @@ const schema = new mongoose.Schema({
   nextAttemptAt: { type: Date, default: null },
   attempts: { ...safeIntegerField(), default: 0 },
   revision: { ...safeIntegerField(), default: 0 },
+  recoveryLeaseId: { type: String, default: null, select: false, maxlength: 64 },
+  recoveryLeaseUntil: { type: Date, default: null, select: false },
+  recoveryAttempts: { ...safeIntegerField(), default: 0, select: false },
+  nextRecoveryAt: { type: Date, default: null, select: false },
 }, financialModelOptions);
 schema.pre('validate', function validateRefund() {
   const local = this.source === 'admin';
@@ -82,4 +86,5 @@ schema.index({ status: 1, nextAttemptAt: 1, leaseUntil: 1 });
 schema.index({ orderId: 1, createdAt: -1, _id: -1 });
 schema.index({ createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });
+schema.index({ status: 1, nextRecoveryAt: 1, recoveryLeaseUntil: 1 });
 export const Refund = mongoose.model('Refund', schema);

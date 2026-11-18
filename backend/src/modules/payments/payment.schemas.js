@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ApiError } from '../../utils/ApiError.js';
+import { financialEventTypes, parseFinancialEvent } from '../refunds/refundEvent.schemas.js';
 
 export const checkoutEventTypes = Object.freeze([
   'checkout.session.completed', 'checkout.session.async_payment_succeeded',
@@ -30,6 +31,9 @@ export function parsePaymentEvent(input) {
   const parsed = envelope.safeParse(input);
   if (!parsed.success) throw new ApiError(400, 'INVALID_PAYMENT_EVENT', 'Invalid payment event');
   const event = parsed.data;
+  if (financialEventTypes.includes(event.type)) {
+    return { eventId: event.id, eventType: event.type, ignored: false, payload: parseFinancialEvent(event) };
+  }
   if (!checkoutEventTypes.includes(event.type)) {
     return { eventId: event.id, eventType: event.type, ignored: true, payload: { created: event.created } };
   }
