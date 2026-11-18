@@ -105,6 +105,8 @@ const environmentSchema = z
     STRIPE_WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().min(60).max(600).default(300),
     STRIPE_API_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(10_000),
     REFUND_PROCESSING_ENABLED: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
+    EARNINGS_ELIGIBILITY_INTERVAL_MS: z.coerce.number().int().min(1000).max(3_600_000).default(30_000),
+    EARNINGS_ELIGIBILITY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
     REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),

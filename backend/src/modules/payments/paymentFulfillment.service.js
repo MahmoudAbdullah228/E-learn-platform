@@ -1,5 +1,4 @@
 import { EarningEntry } from '../../models/EarningEntry.js';
-import { Enrollment } from '../../models/Enrollment.js';
 import { Order } from '../../models/Order.js';
 import { Payment } from '../../models/Payment.js';
 import { WebhookEvent } from '../../models/WebhookEvent.js';
@@ -8,6 +7,7 @@ import { FinancialHold } from '../../models/FinancialHold.js';
 import { createFinanceFoundationService } from '../finance/finance.service.js';
 import { financialDeadlines } from '../finance/finance.policy.js';
 import { financialEventSource } from '../refunds/refundInbox.service.js';
+import { grantPaidEnrollment } from '../enrollments/enrollmentReentry.service.js';
 
 const fields = '+checkoutSessionId +paymentIntentId';
 
@@ -74,7 +74,7 @@ export function createPaymentFulfillmentService({ clock = () => new Date() } = {
         guard();
         if (!event.modifiedCount) throw new ApiError(409, 'PAYMENT_EVENT_LEASE_LOST',
           'Payment event processing lease expired');
-        const order = await Order.findById(job.payload.orderId).session(session);
+        const order = await Order.findById(job.payload.orderId).select('+replacesOrderId').session(session);
         guard();
         const payment = order && await Payment.findOne({ orderId: order.id })
           .select(fields).session(session);
@@ -122,17 +122,8 @@ export function createPaymentFulfillmentService({ clock = () => new Date() } = {
           guard();
           if (!paymentChanged.modifiedCount || !orderChanged.modifiedCount) throw mismatch();
           // Suspensions and unpublished courses affect access later, not receipt accounting.
-          const existing = await Enrollment.findOne({ studentId: order.studentId,
-            courseId: order.courseId }).session(session);
+          await grantPaidEnrollment({ order, session, now });
           guard();
-          if (existing) {
-            if (existing.sourceOrderId?.toString() !== order.id || existing.status !== 'active')
-              throw mismatch();
-          } else {
-            await Enrollment.create([{ studentId: order.studentId, courseId: order.courseId,
-              sourceOrderId: order.id, enrolledAt: now }], { session });
-            guard();
-          }
           await EarningEntry.create([{ instructorId: order.instructorId, orderId: order.id,
             type: 'sale', amountMinor: order.instructorAmountMinor, currency: order.currency,
             status: 'pending', policyVersionId: order.policyVersionId, eligibleAt: deadlines?.eligibleAt ?? null }], { session });

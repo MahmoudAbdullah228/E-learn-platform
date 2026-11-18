@@ -25,4 +25,5 @@ protectSnapshot(schema, ['provider', 'eventId', 'eventType', 'payload', 'origin'
 schema.index({ provider: 1, eventId: 1 }, { unique: true });
 schema.index({ status: 1, availableAt: 1, leaseUntil: 1 });
 schema.index({ paymentIntentId: 1, status: 1 });
+schema.index({ status: 1, eventType: 1, paymentIntentId: 1 });
 export const WebhookEvent = mongoose.model('WebhookEvent', schema);

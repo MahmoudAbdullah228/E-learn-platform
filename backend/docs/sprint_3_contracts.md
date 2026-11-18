@@ -1,6 +1,6 @@
 # Sprint 3 — S3-01 contract and schema handoff
 
-Date: 2026-11-18. Status: **S3-02 foundation through S3-06 provider-confirmed refunds/recovery implemented locally;
+Date: 2026-11-18. Status: **S3-02 foundation through S3-08 refunds, repurchase and internal earnings eligibility implemented locally;
 later Story contracts remain design only**.
 Precedence for selected product behavior: [policy register](sprint_3_policy_register.md).
 Architecture: [financial ADR](adr-0006-financial-integrity-and-settlements.md) and
@@ -12,7 +12,7 @@ defined by the served OpenAPI, now including the guarded S3-05 boundary. This fi
 S3-02 is implemented locally as an internal foundation, not a refund/payout HTTP release.
 The implementation, indexes, service interfaces and verification are recorded in
 [S3-02 evidence](sprint_3_financial_foundation.md). The following table defines its scope;
-S3-03 through S3-06 are implemented as noted below; S3-07 onward remain unimplemented design contracts.
+S3-03 through S3-08 are implemented as noted below; S3-09 onward remain unimplemented design contracts.
 
 | Layer | Foundation work | Must not do |
 | --- | --- | --- |
@@ -113,14 +113,33 @@ The existing signed raw-body `/webhooks/stripe` route/inbox now discriminate Che
 Refund, Charge and Dispute evidence. Provider `succeeded` is distinct from creation/pending/requires_action.
 [Stripe Refund object](https://docs.stripe.com/api/refunds/object).
 
+### S3-07 paid/free reentry and owner reads
+
+Implemented locally with [source-proof/retained-progress evidence](sprint_3_repurchase.md).
+OpenAPI 1.5.0 defines paid repurchase through existing Checkout and explicit now-free
+reactivation through free enrollment. Same enrollment/history, new paid source or null free
+source; independent revocations remain blocked and an old event cannot revoke a newer grant.
+Library returns a coarse refund/restricted reason; owner/admin order reads include a safe
+latestRefund summary. No force-reactivate endpoint, client source field or provider-secret
+DTO is introduced. Real Staging B12 acceptance remains separate.
+
+### S3-08 internal eligibility and signed carry-forward
+
+Implemented locally with [dated proof/hold/carry-forward evidence](sprint_3_earnings_eligibility.md).
+No new HTTP controller/route/DTO or auth namespace: OpenAPI stays 1.5.0. The server's bounded
+worker promotes a pending sale only from its original trusted confirmation/policy/deadline,
+under the shared instructor guard and without financial holds/refunds/inbox/dependent debt.
+The internal preview includes old/current negative balances and cannot use a positive
+cutoff to hide known debt. A complete-set capacity error returns no truncated total.
+CLI is dry-run by default; no force eligibility, current-policy mapping or transfer command.
+S3-09 must recompute/reserve under its own financial transaction; a preview is never authority.
+
 ## 4. Downstream contracts / freeze gates
 
-The plan's route inventory remains the downstream target for S3-07–17. Before each owning
+The plan's route inventory remains the downstream target for S3-09–17. Before each owning
 Story starts, freeze its complete request/DTO/error/state examples using the ADR invariants:
 
-- S3-07: enrollment revocationReason + sourceOrder fencing, repurchase preserves progress;
-  current order paidAt remains compatible, add trusted paymentConfirmedAt explicitly.
-- S3-08–10: preview is not a reservation. Create payout from instructorId/month/cutoff/key,
+- S3-09/10: preview is not a reservation. Create payout from instructorId/month/cutoff/key,
   no amount/items. Submit/seal, mark-paid and cancellation use expectedRevision and scoped key;
   mark-paid adds normalized method/reference/confirmedAmountMinor. Unknown transfer resolution
   requires audited evidence, not a freely editable payout status.

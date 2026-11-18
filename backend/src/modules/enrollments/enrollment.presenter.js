@@ -5,7 +5,9 @@ export function toEnrollment(enrollment, { lastLessonId = enrollment.lastLessonI
   return { id: enrollment._id.toString(), courseId: enrollment.courseId.toString(),
     sourceOrderId: enrollment.sourceOrderId?.toString() ?? null, status: enrollment.status,
     enrolledAt: enrollment.enrolledAt, completedAt: completedAt ?? null,
-    revokedAt: enrollment.revokedAt ?? null, lastLessonId: lastLessonId?.toString() ?? null };
+    revokedAt: enrollment.revokedAt ?? null, revocationReason: enrollment.status === 'revoked'
+      ? enrollment.revocationReason === 'refund' ? 'refund' : 'restricted' : null,
+    lastLessonId: lastLessonId?.toString() ?? null };
 }
 
 export function toLibraryCourse(course, coverUrl = null) {

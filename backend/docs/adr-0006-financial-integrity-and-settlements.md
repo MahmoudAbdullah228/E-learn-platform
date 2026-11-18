@@ -2,7 +2,8 @@
 
 Date: 2026-11-18. Status: **Accepted**. S3-02 internal foundation is implemented locally;
 S3-05/S3-06 now implement guarded refund requests and provider-confirmed finalization/recovery;
-payout operator workflows and eligibility remain for their owning Stories. Current evidence:
+payout operator workflows remain for their owning Stories. S3-08 now implements internal
+dated eligibility and signed carry-forward; [eligibility evidence](sprint_3_earnings_eligibility.md). Current refund evidence:
 [refund finalization](sprint_3_refund_finalization.md). Context below preserves the original decision baseline.
 Product behavior: [policy register](sprint_3_policy_register.md). Contract draft:
 [S3-01 contracts](sprint_3_contracts.md). Source: MVP §9, BR03/04/07/08, financial schema

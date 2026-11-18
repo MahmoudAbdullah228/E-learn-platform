@@ -22,7 +22,12 @@ remains disabled by default. S3-06 now covers the G03 new-purchase confirmation/
 integration and G04 atomic finalization/recovery implementation; see
 [S3-06 evidence](sprint_3_refund_finalization.md). Legacy mapping, explicit policy activation,
 S3-08 eligibility, Staging and qualified financial review remain separate gates.
-Next Story is S3-07; the gap table below preserves the historical baseline.
+S3-07 now covers source-fenced paid/free reentry and retained progress, with
+[separate local evidence](sprint_3_repurchase.md); real B12 acceptance is still open.
+S3-08 now implements dated eligibility, safe backfill/holds and internal signed carry-forward;
+[local evidence](sprint_3_earnings_eligibility.md). G05/G06 payout admission/operator work
+and real acceptance remain open for S3-09/S3-10. Next Story is S3-09;
+the gap table below preserves the historical baseline.
 
 ## 1. New automated baseline — PASS
 

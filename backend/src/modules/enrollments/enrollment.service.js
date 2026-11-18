@@ -13,6 +13,7 @@ import { toPagination } from '../../utils/pagination.js';
 import { toEnrollment, toLibraryCourse } from './enrollment.presenter.js';
 import { readProgressSummaries } from '../progress/progress.read.service.js';
 import { publicCourseFilter, isLearningCourse, courseAvailabilityCode } from '../courses/courseAccess.policy.js';
+import { reactivateFreeEnrollment } from './enrollmentReentry.service.js';
 
 const options = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 const transaction = work => mongoose.connection.transaction(work, options);
@@ -36,19 +37,21 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
           throw new ApiError(403, 'OWN_COURSE_ENROLLMENT_NOT_ALLOWED',
             'You cannot enroll in your own course');
         }
-        const existing = await Enrollment.findOne({ studentId, courseId }).session(session);
+        const existing = await Enrollment.findOne({ studentId, courseId }).select('+progressRevision').session(session);
         if (existing?.status === 'active') {
           const summaries = await readProgressSummaries({ enrollments: [existing], session });
           return { created: false, enrollment: toEnrollment(existing,
             { completedAt: summaries.get(existing.id).completedAt }) };
         }
-        if (existing) throw new ApiError(409, 'ENROLLMENT_REVOKED',
-          'A revoked enrollment cannot be reactivated through free enrollment');
         if (await Order.exists({ studentId, courseId, purchaseSlotActive: true }).session(session)) {
           throw new ApiError(409, 'PAYMENT_PENDING', 'An existing purchase must be resolved first');
         }
         if (course.priceMinor !== 0) throw new ApiError(409, 'PAID_COURSE_REQUIRES_CHECKOUT',
           'Paid courses require payment checkout');
+        if (existing) {
+          const enrollment = await reactivateFreeEnrollment({ enrollment: existing, session, now: clock() });
+          return { created: false, enrollment: toEnrollment(enrollment) };
+        }
         const [enrollment] = await Enrollment.create([{ studentId, courseId, enrolledAt: clock(),
           sourceOrderId: null }], { session });
         return { created: true, enrollment: toEnrollment(enrollment) };
@@ -91,7 +94,8 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
           return { enrollment: toEnrollment(enrollment, { lastLessonId, completedAt: progress?.completedAt ?? null }),
             course: toLibraryCourse(course, coverUrl), progress,
             available: enrollment.status === 'active' && isLearningCourse(course),
-            availabilityCode: courseAvailabilityCode(course, enrollment.status) };
+            availabilityCode: enrollment.status === 'revoked' && enrollment.revocationReason === 'refund'
+              ? 'ENROLLMENT_REFUNDED' : courseAvailabilityCode(course, enrollment.status) };
         }), pagination: toPagination(query, total) };
       });
     },

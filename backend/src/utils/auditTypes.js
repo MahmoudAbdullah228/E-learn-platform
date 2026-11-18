@@ -1,4 +1,5 @@
 export const auditActions = Object.freeze(['financial_policy.created', 'refund.requested', 'refund.succeeded',
+  'earning.eligible',
   'refund.failed', 'refund.reconciliation_required', 'financial_hold.opened', 'financial_hold.resolved',
   'payout.created', 'payout.submitted', 'payout.paid', 'payout.cancelled', 'payout.reconciled',
   'user.status_changed', 'course.archived', 'course.access_policy_changed', 'course.media_unavailable', 'course.corrected',

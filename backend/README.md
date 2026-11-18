@@ -29,7 +29,14 @@ holds and bounded recovery using the existing inbox. New Checkout freezes a revi
 active policy when present; trusted signed success-event time supplies confirmation and
 deadlines. No legacy backfill or policy activation runs automatically. See
 [S3-06 implementation and operations](docs/sprint_3_refund_finalization.md).
-Local OpenAPI is **1.4.0** (61 paths). Repurchase/eligibility/payout operations remain later stories.
+S3-07 adds paid repurchase and explicit now-free reactivation after proven full refund,
+preserving enrollment/progress identity and protecting the new source from old events.
+Owner order reads include a safe latest-refund summary; library reads expose only coarse
+refund/restricted revocation categories. See [S3-07 behavior and verification](docs/sprint_3_repurchase.md).
+S3-08 adds a bounded internal eligibility worker, proof-based dated backfill, persistent
+review holds and a complete signed carry-forward preview. It changes ledger readiness
+only; payout/operator APIs remain S3-09/S3-10. See [S3-08 rules and verification](docs/sprint_3_earnings_eligibility.md).
+Local OpenAPI remains **1.5.0** (61 paths); S3-08 introduces no HTTP contract change.
 
 ## Requirements
 
@@ -346,6 +353,8 @@ See `docs/frontend-handoff.md` for the integration flow and error handling.
 | `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | Signature timestamp tolerance, default 300 seconds |
 | `STRIPE_API_TIMEOUT_MS` | Stripe SDK request timeout, default 10000 ms |
 | `REFUND_PROCESSING_ENABLED` | Strict true/false, default false; enables first Test refund issuance only after reviewed policy/acceptance. External financial event processing remains active. |
+| `EARNINGS_ELIGIBILITY_INTERVAL_MS` | Background eligibility interval, default 30000; integer 1000–3600000 ms |
+| `EARNINGS_ELIGIBILITY_BATCH_SIZE` | Maximum entries per background drain, default 25; integer 1–100 |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | Per-IP authentication rate-limit window |
 | `REGISTER_RATE_LIMIT_MAX` | Registration attempts allowed per window and IP |
 | `VERIFY_RATE_LIMIT_MAX` | Verification attempts allowed per window and IP |
@@ -375,6 +384,7 @@ Production requires HTTPS `EMAIL_VERIFICATION_URL` and `PASSWORD_RESET_URL` valu
 | `npm run docs:check` | Validate the required OpenAPI structure |
 | `npm run payments:events -- --event-id <id>` | Dry-run; add `--execute` for authenticated event recovery or `--replay --execute` for a reviewed failed inbox job |
 | `npm run refunds:reconcile -- --refund-id <id>` | Dry-run; `--execute` reads one provider outcome into the same inbox, never issues another refund |
+| `npm run earnings:eligibility` | Dry-run; `--execute` evaluates one candidate, optionally `--entry-id <id>`; no transfer or force-eligible option |
 | `npm run staging:status` | Dry-run read-only operational snapshot; `-- --execute` reads aggregate DB counts |
 | `npm run verify` | Run lint, contract validation, and all tests |
 | `npm run providers:proof:live -- --execute` | Run the guarded provider smoke test against dedicated Test/Staging accounts |

@@ -65,6 +65,7 @@ async function startServer() {
     app.locals.mediaCleanupWorker.start();
     app.locals.paymentWebhookWorker.start();
     app.locals.refundRecoveryWorker.start();
+    app.locals.earningsEligibilityWorker.start();
   }
 }
 
@@ -84,6 +85,7 @@ async function shutdown(signal, exitCode = 0) {
   const refundsStopped = app.locals.refundService.stop();
   const paymentWorkerStopped = app.locals.paymentWebhookWorker.stop();
   const refundRecoveryStopped = app.locals.refundRecoveryWorker.stop();
+  const earningsEligibilityStopped = app.locals.earningsEligibilityWorker.stop();
 
   await closeHttpServer(httpServer, {
     timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
@@ -91,7 +93,7 @@ async function shutdown(signal, exitCode = 0) {
   });
 
   await Promise.all([workerStopped, videoCleanupStopped, mediaCleanupStopped, checkoutStopped,
-    paymentWorkerStopped, refundRecoveryStopped, learningAccessStopped, refundsStopped]);
+    paymentWorkerStopped, refundRecoveryStopped, earningsEligibilityStopped, learningAccessStopped, refundsStopped]);
   await disconnectDatabase();
   process.exitCode = exitCode;
 }

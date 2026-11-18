@@ -18,6 +18,7 @@ const schema = new mongoose.Schema({
     default: 'pending', required: true },
   expiresAt: { type: Date, required: true, immutable: true },
   paidAt: { type: Date, default: null },
+  replacesOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null, select: false },
   policyVersionId: { type: mongoose.Schema.Types.ObjectId, ref: 'FinancialPolicyVersion', default: null },
   refundWindowSeconds: { type: Number, default: null, min: 1, max: 365 * 86400,
     validate: value => value == null || Number.isSafeInteger(value) },
@@ -27,7 +28,7 @@ const schema = new mongoose.Schema({
 }, { timestamps: true });
 protectSnapshot(schema, ['studentId', 'courseId', 'instructorId', 'courseTitleSnapshot',
   'amountMinor', 'currency', 'commissionBps', 'platformAmountMinor', 'instructorAmountMinor', 'expiresAt',
-  'policyVersionId', 'refundWindowSeconds']);
+  'policyVersionId', 'refundWindowSeconds', 'replacesOrderId']);
 protectWriteOnce(schema, ['paymentConfirmedAt', 'refundDeadlineAt']);
 schema.pre('validate', function validateRevenueSplit() {
   if (Boolean(this.policyVersionId) !== (this.refundWindowSeconds != null)) {

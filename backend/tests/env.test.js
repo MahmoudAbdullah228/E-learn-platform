@@ -47,6 +47,14 @@ test('startup fails clearly when MONGO_URI is missing', () => {
   assert.match(`${result.stdout}${result.stderr}`, /MONGO_URI is required/);
 });
 
+test('eligibility scheduling configuration rejects unbounded intervals and batches', () => {
+  for (const [key, value] of [['EARNINGS_ELIGIBILITY_INTERVAL_MS', '999'], ['EARNINGS_ELIGIBILITY_INTERVAL_MS', '3600001'],
+    ['EARNINGS_ELIGIBILITY_BATCH_SIZE', '0'], ['EARNINGS_ELIGIBILITY_BATCH_SIZE', '101'], ['EARNINGS_ELIGIBILITY_BATCH_SIZE', '1.5']]) {
+    const result = importEnvironment({ [key]: value }); assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}${result.stderr}`, new RegExp(key));
+  }
+});
+
 test('refund issuance is opt-in with strict boolean configuration and complete Test Mode settings', () => {
   for (const value of ['yes', '1', '']) {
     const result = importEnvironment({ REFUND_PROCESSING_ENABLED: value });

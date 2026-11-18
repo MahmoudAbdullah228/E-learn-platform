@@ -1,4 +1,4 @@
-# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-06
+# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-08
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 For coordinated Sprint 2 acceptance, use [the staging runbook](staging-acceptance.md)
@@ -206,7 +206,8 @@ real Stripe Test staging proof is still required before shipping the full purcha
 
 All routes require a current verified active bearer session and use `Cache-Control: no-store`.
 Send no body or `{}` to `POST /courses/:courseId/enroll`: 201 creates one free enrollment;
-200 returns existing active access, with no fake financial records. Paid courses require
+200 returns existing active access or explicit eligible now-free reactivation after a full
+refund (S3-07 below), with no fake financial records. Paid courses require
 checkout (409); a pending purchase blocks free enrollment even after a price change.
 Revoked enrollment is not silently restored. Do not send studentId, sourceOrderId, or price.
 
@@ -276,7 +277,7 @@ Use `GET /instructor/courses` for the dashboard and `GET /instructor/courses/:co
 
 ## S3-05 / S3-06 — Durable refunds and provider-confirmed finalization
 
-The current local specification is OpenAPI **1.4.0**. Stripe monetary issuance defaults to
+The current local specification is OpenAPI **1.5.0**. Stripe monetary issuance defaults to
 disabled: POST returns `503 REFUND_PROCESSING_NOT_ENABLED` while the operator's
 `REFUND_PROCESSING_ENABLED` is false. Activation requires complete Test Mode settings,
 an explicitly reviewed/activated immutable policy and separate Staging acceptance.
@@ -304,7 +305,8 @@ transaction committed: Order/Payment are refunded, the old purchase slot is rele
 the matching active enrollment is revoked and the ledger is accounted. `completedAt` is
 local accounting completion time. External partial refunds/disputes remain held for review.
 `failed`/`cancelled` require authenticated non-success evidence; network errors are not proof.
-Do not offer repurchase yet: its enrollment-reactivation flow belongs to S3-07.
+S3-07 now supports repurchase through normal Checkout and explicit now-free reactivation;
+follow the flow below and refresh the current library before rendering access.
 Already issued media credentials may survive their short TTL (video up to 15 min, PDF up to 60 sec).
 Reasons, actor, payment/provider IDs, keys, leases and raw errors are not exposed in these DTOs.
 
@@ -321,6 +323,60 @@ Legacy orders missing policy/trusted confirmation cannot be fixed by the fronten
 paidAt must not be used to fabricate the refund deadline. Standard window is policy-bound;
 an allowed explicit override affects time only. See [S3-05 details](sprint_3_refund_requests.md).
 Recovery and operational boundaries: [S3-06 details](sprint_3_refund_finalization.md).
+
+## S3-07 — Repurchase, now-free reactivation and retained progress
+
+Order list/detail DTOs now include `latestRefund`: null, or
+`{id,kind,status,amountMinor,currency,createdAt,completedAt}`. This is the newest persisted
+refund by createdAt/id, not the sum of all refunds, a full history or a live provider lookup.
+`kind` is full/partial. Status is requested/processing/pending/requires_reconciliation/
+succeeded/failed/cancelled. Partial/reconciliation is not a full refund. Keys, provider IDs,
+actors and private reasons are never exposed. Admin order reads use the same safe summary.
+
+Enrollment DTOs now include `revocationReason`: `refund`, `restricted`, or null. All
+independent/legacy revocations use restricted; no raw legal/security/admin reasons are
+disclosed. A revoked refund enrollment has library `availabilityCode=ENROLLMENT_REFUNDED`;
+other revocations retain ENROLLMENT_REVOKED. Use `status=all`/`revoked` to see inactive rows.
+The code explains inactive access; it does not promise that the course is still published,
+available, or eligible to buy again. No retry/reactivation button may bypass a 409/404.
+
+For a completed full refund, read the current course and use the normal flow:
+
+1. Paid published course: `POST /courses/:courseId/checkout` with no body or `{}`. A new
+   server-owned order/session snapshots current price/policy. Save this **new order ID**
+   for polling. Pending/failed/unknown refunds do not unlock repurchase. While payment is
+   pending, the old enrollment remains revoked and progress/media writes remain denied.
+2. After trusted paid fulfillment, refresh `/users/me/courses` and the learning outline.
+   The enrollment ID stays the same, sourceOrderId becomes the new paid order and enrolledAt
+   records this new grant. Old orders/refunds stay historical; a refunded old order must
+   never hide the new active entitlement. A late old event cannot revoke the new source.
+3. If the course is now free, explicitly call `POST /courses/:courseId/enroll` with `{}`.
+   A proven refund-revoked enrollment is reactivated with HTTP 200 and null sourceOrderId,
+   with no new Order/Payment/Earning. A pending paid attempt returns PAYMENT_PENDING until
+   resolved; do not switch to a free entitlement to evade an unresolved charge.
+
+Both paths retain LessonProgress identity/timestamps and recalculate against current
+lessons. Added lessons can lower the percentage/clear current completedAt; deleted/foreign
+lessons do not contribute and an invalid lastLessonId becomes null. Display the current
+progress response, not the old completion timestamp. No client `reactivate`, `sourceOrderId`,
+`replacesOrderId`, student ID, roles or amount is accepted. Independent revocations remain
+blocked; a block imposed after Checkout still survives genuine payment accounting.
+Credentials already issued before refund remain bounded by their existing short TTL.
+
+No new endpoints or limiter namespaces were added. Test Mode refund issuance remains
+disabled by default; automated local tests do not establish real Staging B12 acceptance.
+See [S3-07 implementation](sprint_3_repurchase.md).
+
+## S3-08 — Internal eligibility only
+
+The OpenAPI contract stays **1.5.0**, with the S3-07 fields above. S3-08 adds no frontend
+endpoint. Ledger `pending`/`eligible` describes financial readiness, never money transferred.
+The server checks frozen sale policy/trusted confirmation, exact expiry and unresolved
+holds/refunds/inbox/dependent transfers; it preserves signed debt and old financial history.
+Eligibility does not affect learner access, order paid status, or the provider refund flag.
+Payout and earnings dashboard APIs remain in their owning later Stories; do not call
+unimplemented plan routes or show a transfer button based on eligibility alone.
+See [internal behavior/operations](sprint_3_earnings_eligibility.md).
 
 ## S3-04 — Archive and legal/security access
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.4.0
+  version: 1.5.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -30,7 +30,11 @@ info:
     bounded read-only recovery, and policy/confirmation snapshots on new paid purchases.
     REFUND_PROCESSING_ENABLED defaults to false; explicit operator activation and reviewed policy are required.
     Legacy orders without frozen policy/trusted confirmation are never guessed from paidAt.
-    Repurchase, earnings eligibility and payout operations remain later stories.
+    S3-07 adds source-fenced paid repurchase and now-free reactivation after a confirmed full refund,
+    retaining the enrollment/progress identity and recomputing progress against current lessons.
+    Owner order reads include the latest safe refund summary; library reads distinguish refunded access.
+    S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
+    Payout and earnings dashboard operations remain later stories; eligible never means transferred.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -113,7 +117,8 @@ paths:
         Full success marks Order/Payment refunded, releases the purchase slot, revokes only
         the matching active enrollment, and reverses the sale or records settlement debt.
         External partial refunds/disputes retain review holds without asserting a full refund.
-        Repurchase support remains a later story; a released slot alone does not reactivate access.
+        Repurchase uses the normal Checkout/free-enrollment routes after confirmed full-refund proof.
+        A released slot alone does not reactivate access; independent revocations are never bypassed.
         There is no refund retry/cancel/complete endpoint here. All outcomes are no-store.
         Per-user write quota uses ADMIN_WRITE_RATE_LIMIT settings (default 30/minute).
       security: [{ bearerAuth: [] }]
@@ -644,6 +649,13 @@ paths:
         New Checkout freezes the active financial policy when configured. When refund issuance
         is enabled, missing reviewed policy returns 503 FINANCIAL_POLICY_NOT_CONFIGURED
         before a new order/provider session is created. No legacy policy is inferred.
+        After a confirmed full refund, the same route reserves a fresh order/session using
+        the current server price/policy; access remains revoked until trusted paid fulfillment.
+        Enrollment identity and lesson history are retained, its source becomes the new order,
+        current completion/resume is recalculated, and old refund events cannot revoke it.
+        Independent admin/legal/security/legacy revocations return 409 ENROLLMENT_REVOKED.
+        If an independent block is imposed after reservation, genuine payment is accounted
+        while that block remains. No client reactivation/source/replacement fields are accepted.
       tags: [Checkout]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/CourseId' }]
@@ -2105,7 +2117,12 @@ paths:
         Active verified student, not the course owner. Send no body or an empty object.
         Creates one active Enrollment with null sourceOrderId, and no financial records or provider calls.
         Existing active access returns 200 unchanged, including after a later price change.
-        Revoked access returns ENROLLMENT_REVOKED; it is never silently restored.
+        If a refunded course is now free, an explicit call may reactivate the same enrollment
+        only after matching full-refund Order/Payment/Refund proof. Returns 200, with null
+        sourceOrderId, retained lesson progress and recalculated current completion/resume.
+        No new Order/Payment/Earning is created. An active pending purchase blocks this path.
+        Independent admin/legal/security/legacy revocations return ENROLLMENT_REVOKED;
+        no body field can force reactivation or supply the entitlement source.
         PAID_COURSE_REQUIRES_CHECKOUT and PAYMENT_PENDING are 409 conflicts.
         Quota is ENROLL_RATE_LIMIT_MAX (default 10 per minute), per user across all courses.
         All responses, including errors, use Cache-Control no-store.
@@ -2123,7 +2140,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EnrollmentResponse' }
         '200':
-          description: Already active; same enrollment unchanged
+          description: Already active, or same enrollment explicitly reactivated after proven full refund of a now-free course
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EnrollmentResponse' }
@@ -2146,8 +2163,10 @@ paths:
         enrollment with course null and available false, without leaking draft content.
         Each available active enrollment has dynamic current-curriculum progress;
         unavailable/revoked entries have progress null. Zero lessons means zero percent.
-        availabilityCode is AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE or
-        ENROLLMENT_REVOKED; raw legal/security reasons never appear in this student response.
+        availabilityCode is AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE,
+        ENROLLMENT_REFUNDED or ENROLLMENT_REVOKED. Revocation reason is only refund,
+        restricted or null; raw legal/security reasons never appear in this student response.
+        Refunded is not a promise that the course is currently available to buy again.
         All private reads share PRIVATE_READ_RATE_LIMIT_MAX (default 120 per minute) per user.
         Cache-Control no-store applies to successes and errors.
       security: [{ bearerAuth: [] }]
@@ -2201,7 +2220,7 @@ paths:
       operationId: listMyOrders
       tags: [Orders]
       summary: Read the current student's order history
-      description: Immutable title/price snapshots, newest first; shared private-read quota and no-store. Read-only, never calls Stripe or fulfills payments.
+      description: Immutable title/price snapshots, newest first, with latest persisted safe refund summary; shared private-read quota and no-store. A historical refunded order does not describe a newer entitlement. Read-only, never calls Stripe or fulfills payments.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/Page' }
@@ -2684,7 +2703,7 @@ components:
     Enrollment:
       type: object
       additionalProperties: false
-      required: [id, courseId, sourceOrderId, status, enrolledAt, completedAt, revokedAt, lastLessonId]
+      required: [id, courseId, sourceOrderId, status, enrolledAt, completedAt, revokedAt, revocationReason, lastLessonId]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{24}$' }
         courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
@@ -2693,6 +2712,10 @@ components:
         enrolledAt: { type: string, format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
         revokedAt: { type: [string, 'null'], format: date-time }
+        revocationReason:
+          type: [string, 'null']
+          enum: [refund, restricted, null]
+          description: Coarse owner-safe category; independent and legacy revocations use restricted
         lastLessonId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
     EnrollmentResponse:
       type: object
@@ -2740,7 +2763,7 @@ components:
                     oneOf: [{ $ref: '#/components/schemas/ProgressSummary' }, { type: 'null' }]
                   enrollment: { $ref: '#/components/schemas/Enrollment' }
                   available: { type: boolean }
-                  availabilityCode: { type: string, enum: [AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE, ENROLLMENT_REVOKED] }
+                  availabilityCode: { type: string, enum: [AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE, ENROLLMENT_REFUNDED, ENROLLMENT_REVOKED] }
                   course:
                     oneOf:
                       - allOf: [{ $ref: '#/components/schemas/LibraryCourse' }]
@@ -2804,7 +2827,7 @@ components:
             course: { $ref: '#/components/schemas/LearningCourse' }
     OrderSnapshot:
       type: object
-      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt, paidAt]
+      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt, paidAt, latestRefund]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{24}$' }
         courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
@@ -2815,6 +2838,21 @@ components:
         expiresAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         paidAt: { type: [string, 'null'], format: date-time }
+        latestRefund:
+          description: Latest persisted refund by creation time and ID, not cumulative refunded money or current access authority
+          oneOf: [{ $ref: '#/components/schemas/OrderRefundSummary' }, { type: 'null' }]
+    OrderRefundSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, amountMinor, currency, createdAt, completedAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        kind: { type: string, enum: [full, partial] }
+        status: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
     StudentOrder:
       allOf: [{ $ref: '#/components/schemas/OrderSnapshot' }]
       unevaluatedProperties: false

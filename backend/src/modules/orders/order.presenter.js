@@ -1,7 +1,10 @@
 import { toCheckoutOrder } from '../checkout/checkout.presenter.js';
 
-export function toOrder(order, { admin = false } = {}) {
-  const dto = { ...toCheckoutOrder(order), paidAt: order.paidAt ?? null };
+export function toOrder(order, { admin = false, latestRefund = null } = {}) {
+  const dto = { ...toCheckoutOrder(order), paidAt: order.paidAt ?? null,
+    latestRefund: latestRefund ? { id: String(latestRefund._id), kind: latestRefund.kind, status: latestRefund.status,
+      amountMinor: latestRefund.amountMinor, currency: latestRefund.currency,
+      createdAt: latestRefund.createdAt, completedAt: latestRefund.completedAt ?? null } : null };
   if (admin) Object.assign(dto, { studentId: order.studentId.toString(),
     instructorId: order.instructorId.toString(), commissionBps: order.commissionBps,
     platformAmountMinor: order.platformAmountMinor, instructorAmountMinor: order.instructorAmountMinor });

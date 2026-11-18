@@ -15,6 +15,7 @@
     "staging:status": "node --env-file-if-exists=.env scripts/staging-status.js",
     "payments:events": "node --env-file-if-exists=.env scripts/payment-events.js",
     "refunds:reconcile": "node --env-file-if-exists=.env scripts/refund-reconcile.js",
+    "earnings:eligibility": "node --env-file-if-exists=.env scripts/earnings-eligibility.js",
     "providers:proof:live": "node --env-file-if-exists=.env scripts/verify-providers-live.js",
     "migrate:sprint2-content": "node --env-file-if-exists=.env scripts/migrate-sprint2-content.js",
     "migrate:signed-playback": "node --env-file-if-exists=.env scripts/migrate-signed-playback.js",

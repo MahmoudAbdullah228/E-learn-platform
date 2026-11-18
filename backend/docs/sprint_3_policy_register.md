@@ -42,6 +42,16 @@ not a claim that text semantics can be perfectly validated automatically.
 
 ## 2. Time, policy activation and historical data
 
+S3-07 implements P12/P13 with completed source-proof and retained-progress evidence;
+see [repurchase behavior/verification](sprint_3_repurchase.md). These local tests do not
+replace real Staging B12 or activate the default-disabled Test refund issuance gate.
+
+S3-08 implements dated positive eligibility under P05/P06 and signed carry-forward safety
+under P08/P09; see [eligibility evidence](sprint_3_earnings_eligibility.md). A historical
+positive cutoff cannot hide already-known eligible negative debt; all such debt remains
+in the current preview. No periodStart filtering or first-N positive-only total is allowed.
+Unknown transfer debt remains pending for S3-10; no financial hold is auto-resolved here.
+
 - `paidAt` remains the compatibility processing timestamp and never starts the 14-day clock.
   S3-06 now records a separate trusted confirmation fact for new fulfillment; see
   [implementation and rollout boundaries](sprint_3_refund_finalization.md).

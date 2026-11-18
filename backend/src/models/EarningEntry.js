@@ -16,6 +16,13 @@ const schema = new mongoose.Schema({
   eligibleAt: { type: Date, default: null },
   policyVersionId: { type: mongoose.Schema.Types.ObjectId, ref: 'FinancialPolicyVersion', default: null },
   dependentOnPayoutId: { type: mongoose.Schema.Types.ObjectId, ref: 'Payout', default: null },
+  eligibilityLeaseId: { type: String, default: null, maxlength: 64, select: false },
+  eligibilityLeaseUntil: { type: Date, default: null, select: false },
+  eligibilityNextCheckAt: { type: Date, default: null, select: false },
+  eligibilityCheckedAt: { type: Date, default: null, select: false },
+  eligibilityCheckCode: { type: String, default: null, maxlength: 80, match: /^[A-Z][A-Z0-9_]+$/, select: false },
+  eligibilityAttempts: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
+    validate: Number.isSafeInteger, select: false },
 }, { timestamps: true });
 protectSnapshot(schema, ['instructorId', 'orderId', 'refundId', 'type', 'amountMinor', 'currency',
   'policyVersionId', 'dependentOnPayoutId']);
@@ -37,4 +44,5 @@ schema.index({ refundId: 1 }, { unique: true,
 schema.index({ instructorId: 1, status: 1, createdAt: 1 });
 schema.index({ status: 1, eligibleAt: 1, _id: 1 });
 schema.index({ dependentOnPayoutId: 1, status: 1 });
+schema.index({ status: 1, type: 1, eligibleAt: 1, _id: 1 });
 export const EarningEntry = mongoose.model('EarningEntry', schema);

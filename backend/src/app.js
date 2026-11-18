@@ -62,6 +62,7 @@ import { createPaymentInboxService } from './modules/payments/paymentInbox.servi
 import { createPaymentWebhookRouter } from './modules/payments/payment.routes.js';
 import { createPaymentWebhookWorker } from './services/paymentWebhookWorker.service.js';
 import { createRefundRecoveryWorker } from './services/refundRecoveryWorker.service.js';
+import { createEarningsEligibilityWorker } from './services/earningsEligibilityWorker.service.js';
 import { authenticate } from './middlewares/authenticate.js';
 import { noStore } from './middlewares/noStore.js';
 import { createAuthenticatedRateLimiter } from './middlewares/rateLimiter.js';
@@ -121,6 +122,7 @@ export function createApp({
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
   application.locals.refundRecoveryWorker = createRefundRecoveryWorker({ provider: paymentProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.earningsEligibilityWorker = createEarningsEligibilityWorker();
   const deliveryHandlers = Object.freeze({
     email_verification: authService.deliverVerificationRequest,
     password_reset: passwordResetService.deliverResetRequest,
