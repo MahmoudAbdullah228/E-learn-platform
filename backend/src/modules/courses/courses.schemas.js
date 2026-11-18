@@ -47,7 +47,7 @@ export const courseIdParamsSchema = z.object({
 }).strict();
 
 export const listCoursesQuerySchema = z.object({
-  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable']).default('draft'),
+  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable', 'archived']).default('draft'),
   page: z.string().regex(/^[1-9]\d*$/).default('1').transform(Number)
     .pipe(z.number().int().min(1).max(1_000_000)),
   limit: z.string().regex(/^[1-9]\d*$/).default('20').transform(Number)

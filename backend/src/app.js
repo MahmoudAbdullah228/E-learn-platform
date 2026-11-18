@@ -74,6 +74,10 @@ import { createProgressService } from './modules/progress/progress.service.js';
 import { createProgressRouter } from './modules/progress/progress.routes.js';
 import { createAdminUsersRouter } from './modules/adminUsers/adminUsers.routes.js';
 import { createAdminUsersService } from './modules/adminUsers/adminUsers.service.js';
+import { createCourseAdministrationRouter } from './modules/courseAdministration/courseAdministration.routes.js';
+import { createCourseAdministrationService } from './modules/courseAdministration/courseAdministration.service.js';
+import { createRefundService } from './modules/refunds/refund.service.js';
+import { createRefundRouters } from './modules/refunds/refund.routes.js';
 
 export function createApp({
   emailSender,
@@ -104,6 +108,9 @@ export function createApp({
   const catalogService = createCatalogService({ mediaProvider });
   const enrollmentService = createEnrollmentService({ mediaProvider });
   const orderService = createOrderService();
+  const refundService = createRefundService({ provider: paymentProvider, shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.refundService = refundService;
+  const refundRouters = createRefundRouters({ service: refundService, rateLimitStoreFactory });
   const courseReviewService = createCourseReviewService();
   const checkoutService = createCheckoutService({ provider: paymentProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
@@ -134,7 +141,8 @@ export function createApp({
   application.disable('x-powered-by');
   application.set('trust proxy', env.TRUST_PROXY_HOPS);
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders',
-    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users'], noStore);
+    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users',
+    '/api/v1/admin/courses', '/api/v1/admin/refunds'], noStore);
   application.use(
     pinoHttp({
       logger,
@@ -169,6 +177,7 @@ export function createApp({
       rateLimitStoreFactory,
     }),
   );
+  application.use('/api/v1/admin/orders', refundRouters.requests);
   application.use('/api/v1/users/me/courses', createProgressRouter({ service: createProgressService(),
     rateLimitStoreFactory }));
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders'],
@@ -178,6 +187,7 @@ export function createApp({
   application.use('/api/v1/users/me/courses', createLibraryRouter({ enrollmentService }));
   application.use('/api/v1/users/me/orders', createStudentOrdersRouter({ orderService }));
   application.use('/api/v1/admin/orders', createAdminOrdersRouter({ orderService }));
+  application.use('/api/v1/admin/refunds', refundRouters.reads);
   application.use('/api/v1/users', createUsersRouter({ usersService }));
   application.use('/api/v1/lessons', createLearningAccessRouter({ service: learningAccessService,
     rateLimitStoreFactory }));
@@ -208,6 +218,9 @@ export function createApp({
   application.use('/api/v1/instructor/courses', createCoursesRouter({ coursesService }));
   application.use('/api/v1/instructor/courses', createInstructorCourseReviewRouter({
     reviewService: courseReviewService, rateLimitStoreFactory,
+  }));
+  application.use('/api/v1/admin/courses', createCourseAdministrationRouter({
+    service: createCourseAdministrationService(), rateLimitStoreFactory,
   }));
   application.use('/api/v1/admin/courses', createAdminCourseReviewRouter({
     reviewService: courseReviewService, rateLimitStoreFactory,

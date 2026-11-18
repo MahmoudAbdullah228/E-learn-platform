@@ -1,18 +1,18 @@
 # Sprint 3 — S3-01 contract and schema handoff
 
-Date: 2026-11-18. Status: **S3-02 foundation and S3-03 admin users implemented locally;
+Date: 2026-11-18. Status: **S3-02 foundation through S3-05 guarded request/provider contracts implemented locally;
 later Story contracts remain design only**.
 Precedence for selected product behavior: [policy register](sprint_3_policy_register.md).
 Architecture: [financial ADR](adr-0006-financial-integrity-and-settlements.md) and
 [content ADR](adr-0007-published-course-revisions.md). Public implemented operations are
-defined by the served OpenAPI, now including S3-03. This file is not a substitute for it.
+defined by the served OpenAPI, now including the guarded S3-05 boundary. This file is not a substitute for it.
 
 ## 1. S3-02 internal foundation boundary
 
 S3-02 is implemented locally as an internal foundation, not a refund/payout HTTP release.
 The implementation, indexes, service interfaces and verification are recorded in
 [S3-02 evidence](sprint_3_financial_foundation.md). The following table defines its scope;
-S3-03 is implemented as noted below; S3-04 onward remain unimplemented design contracts.
+S3-03 through S3-05 are implemented as noted below; S3-06 onward remain unimplemented design contracts.
 
 | Layer | Foundation work | Must not do |
 | --- | --- | --- |
@@ -73,6 +73,12 @@ revision always conflicts. No Idempotency-Key is introduced for this operation.
 
 ### S3-04 archive / legal-security access policy
 
+Implemented locally; [behavior and verification](sprint_3_course_access.md). Policy revision
+is exposed by current course reads; same-state no-op needs the current revision, stale
+revisions always conflict. Archive admits published/unavailable courses and keeps existing
+active paid/free entitlements. An explicit block overrides media review privileges; unblock
+never changes archive or unavailableAt. There is no unarchive operation.
+
 - `POST /admin/courses/:courseId/archive`: `{reason,expectedRevision}` → 200 `{data:{course}}`.
 - `PATCH /admin/courses/:courseId/access-policy`: `{accessStatus:"available"|"blocked",reason,
   expectedRevision}` → 200 safe course DTO. Raw legal reason is admin-only; learners get a
@@ -81,6 +87,14 @@ revision always conflicts. No Idempotency-Key is introduced for this operation.
   the plan. No new unarchive/delete capability is implied by these routes.
 
 ### S3-05 full refund request
+
+Implemented locally with [S3-05 evidence](sprint_3_refund_requests.md). Default application
+Stripe monetary issuance is disabled pending S3-06 finalization/recovery; new POST returns
+503 REFUND_PROCESSING_NOT_ENABLED. The acceptance/replay/provider behavior below is tested
+with enabled injected fake providers. No env switch, active policy/backfill or final money/
+access effect is introduced. Supported reads are live keyset pages by status/orderId with
+limit 1–100/default20; opaque cursor binds those filters. Safe GET DTO adds updatedAt,
+completedAt and allowlisted failureCode to the accepted DTO, with current status.
 
 - `POST /admin/orders/:orderId/refunds`, key header required, strict body
   `{reason,overrideWindow?:boolean}` (default false). No client amount/payment/provider ID.

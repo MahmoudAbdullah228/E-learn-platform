@@ -9,6 +9,7 @@ import { Section } from '../../models/Section.js';
 import { User } from '../../models/User.js';
 import { VideoAssetState } from '../../models/VideoAssetState.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { hasCourseAccess, isPublicCourse, isLearningCourse } from '../courses/courseAccess.policy.js';
 
 const notFound = () => new ApiError(404, 'LEARNING_CONTENT_NOT_FOUND', 'Learning content was not found');
 
@@ -39,12 +40,17 @@ export async function resolveLearningAccess({ lessonId, auth, assetId, kind, sig
     const privileged = user && (user.roles.includes('admin')
       || (String(course.instructorId) === String(auth.userId)
         && user.roles.includes('instructor') && user.instructorStatus === 'approved'));
+    const enrollment = user?.roles.includes('student') && await read(Enrollment.exists({
+      studentId: auth.userId, courseId: course._id, status: 'active',
+    }));
+    // Legal/security policy applies to reviewers too; ownership is no credential bypass.
+    if (!hasCourseAccess(course)) {
+      if (!privileged && !enrollment) throw notFound();
+      throw new ApiError(409, 'COURSE_ACCESS_BLOCKED', 'Course access is currently restricted');
+    }
     if (!privileged) {
-      if (course.status !== 'published') throw notFound();
-      const preview = kind === 'playback' && lesson.isPreview;
-      const enrollment = user?.roles.includes('student') && await read(Enrollment.exists({
-        studentId: auth.userId, courseId: course._id, status: 'active',
-      }));
+      if (!isPublicCourse(course) && !(enrollment && isLearningCourse(course))) throw notFound();
+      const preview = isPublicCourse(course) && kind === 'playback' && lesson.isPreview;
       if (!preview && !enrollment) {
         throw new ApiError(403, 'ENROLLMENT_REQUIRED', 'An active course enrollment is required');
       }

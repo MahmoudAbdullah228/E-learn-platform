@@ -22,7 +22,4 @@ export const userStatusInputSchema = z.object({
   expectedRevision: revisionSchema,
 }).strict();
 
-export const adminActorSchema = z.object({
-  userId: financialIdSchema, familyId: z.uuid(), tokenVersion: revisionSchema,
-  roles: z.array(z.enum(['student', 'instructor', 'admin'])),
-}).strict();
+export { adminActorSchema } from '../../utils/actorSchemas.js';

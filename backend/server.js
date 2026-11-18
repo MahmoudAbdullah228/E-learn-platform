@@ -80,6 +80,7 @@ async function shutdown(signal, exitCode = 0) {
   const videoCleanupStopped = app.locals.videoCleanupWorker.stop();
   const mediaCleanupStopped = app.locals.mediaCleanupWorker.stop();
   const checkoutStopped = app.locals.checkoutService.stop();
+  const refundsStopped = app.locals.refundService.stop();
   const paymentWorkerStopped = app.locals.paymentWebhookWorker.stop();
 
   await closeHttpServer(httpServer, {
@@ -88,7 +89,7 @@ async function shutdown(signal, exitCode = 0) {
   });
 
   await Promise.all([workerStopped, videoCleanupStopped, mediaCleanupStopped, checkoutStopped,
-    paymentWorkerStopped, learningAccessStopped]);
+    paymentWorkerStopped, learningAccessStopped, refundsStopped]);
   await disconnectDatabase();
   process.exitCode = exitCode;
 }

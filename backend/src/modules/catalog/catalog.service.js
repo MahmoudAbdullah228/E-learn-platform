@@ -9,6 +9,7 @@ import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { normalizeSearchText } from '../../utils/searchText.js';
 import { summarizeCurriculum } from './curriculumSummary.js';
+import { publicCourseFilter } from '../courses/courseAccess.policy.js';
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -73,7 +74,7 @@ async function relatedData(courses, mediaProvider, { instructorDetails = false, 
 export function createCatalogService({ mediaProvider }) {
   return Object.freeze({
     async list({ q, categoryId, pricing, page, limit }) {
-      const filter = { status: 'published' };
+      const filter = publicCourseFilter();
       if (categoryId) filter.categoryId = categoryId;
       if (pricing === 'free') filter.priceMinor = 0;
       if (pricing === 'paid') filter.priceMinor = { $gt: 0 };
@@ -94,7 +95,7 @@ export function createCatalogService({ mediaProvider }) {
 
     async getBySlug(slug) {
       return mongoose.connection.transaction(async session => {
-        const course = await Course.findOne({ slug, status: 'published' }).session(session).lean();
+        const course = await Course.findOne(publicCourseFilter({ slug })).session(session).lean();
         if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
         const related = await relatedData([course], mediaProvider,
           { instructorDetails: true, session });

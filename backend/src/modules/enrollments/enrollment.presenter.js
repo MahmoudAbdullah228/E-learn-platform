@@ -1,3 +1,5 @@
+import { isLearningCourse } from '../courses/courseAccess.policy.js';
+
 export function toEnrollment(enrollment, { lastLessonId = enrollment.lastLessonId,
   completedAt = enrollment.completedAt } = {}) {
   return { id: enrollment._id.toString(), courseId: enrollment.courseId.toString(),
@@ -8,8 +10,8 @@ export function toEnrollment(enrollment, { lastLessonId = enrollment.lastLessonI
 
 export function toLibraryCourse(course, coverUrl = null) {
   // Keep a historical enrollment visible without leaking a reopened draft's content.
-  if (!course || course.status !== 'published') return null;
+  if (!isLearningCourse(course)) return null;
   return { id: course._id.toString(), slug: course.slug, title: course.title,
     shortDescription: course.shortDescription ?? '', level: course.level ?? null,
-    language: course.language ?? null, coverUrl };
+    language: course.language ?? null, coverUrl, status: course.status, archivedAt: course.archivedAt ?? null };
 }

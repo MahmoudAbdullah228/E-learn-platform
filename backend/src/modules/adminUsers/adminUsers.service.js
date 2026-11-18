@@ -4,6 +4,7 @@ import { AdminSecurityState, ADMIN_SECURITY_STATE_ID } from '../../models/AdminS
 import { RefreshSession } from '../../models/RefreshSession.js';
 import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { fenceActiveAdmin } from '../../services/adminAuthorization.service.js';
 import { appendAuditEvent } from '../audit/audit.service.js';
 import { financialIdSchema } from '../finance/finance.schemas.js';
 import { adminActorSchema, userStatusInputSchema } from './adminUsers.schemas.js';
@@ -11,43 +12,17 @@ import { decodeAdminUsersCursor, encodeAdminUsersCursor } from './adminUsers.cur
 import { adminUserProjection, toAdminUser } from './adminUsers.presenter.js';
 import { assertUserStatusChange } from './adminUsers.policy.js';
 
-const unauthenticated = () => new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required');
-const forbidden = () => new ApiError(403, 'INSUFFICIENT_PERMISSIONS', 'You do not have permission to perform this action');
 const missingUser = () => new ApiError(404, 'USER_NOT_FOUND', 'User was not found');
 const stateConflict = () => new ApiError(409, 'STATE_CONFLICT', 'User status changed; reload before trying again');
 const capacityConflict = () => new ApiError(409, 'SECURITY_STATE_REQUIRES_REVIEW', 'Security state requires operational review');
 const queryTimeoutMs = 5_000;
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' },
   maxCommitTimeMS: 10_000 };
-const revisionCapacity = field => ({ $or: [{ [field]: { $lt: Number.MAX_SAFE_INTEGER } },
-  { [field]: { $exists: false } }] });
 
 async function initializeSecurityGuard() {
   if (await AdminSecurityState.exists({ _id: ADMIN_SECURITY_STATE_ID })) return;
   try { await AdminSecurityState.create({ _id: ADMIN_SECURITY_STATE_ID }); }
   catch (error) { if (error?.code !== 11000 || !error.keyPattern?._id) throw error; }
-}
-
-async function fenceAdmin(auth, session, now) {
-  // Write both identity and device so a concurrent suspension, role change, logout,
-  // reset, or session expiry cannot commit using a stale pre-middleware decision.
-  const actor = await User.findOneAndUpdate({ _id: auth.userId, status: 'active',
-    emailVerifiedAt: { $ne: null }, tokenVersion: auth.tokenVersion, roles: 'admin',
-    ...revisionCapacity('adminActionRevision') }, { $inc: { adminActionRevision: 1 } },
-  { session, timestamps: false }).select('_id');
-  if (!actor) {
-    const current = await User.findById(auth.userId).select('status roles emailVerifiedAt +tokenVersion +adminActionRevision')
-      .session(session);
-    if (!current || current.status !== 'active' || !current.emailVerifiedAt
-        || current.tokenVersion !== auth.tokenVersion) throw unauthenticated();
-    if (!current.roles.includes('admin')) throw forbidden();
-    throw capacityConflict();
-  }
-  const device = await RefreshSession.findOneAndUpdate({ userId: auth.userId,
-    familyId: auth.familyId, tokenVersion: auth.tokenVersion, revokedAt: null, expiresAt: { $gt: now },
-    ...revisionCapacity('adminActionRevision') }, { $inc: { adminActionRevision: 1 } },
-  { session, timestamps: false }).select('_id');
-  if (!device) throw unauthenticated();
 }
 
 export function createAdminUsersService({ clock = () => new Date() } = {}) {
@@ -91,7 +66,7 @@ export function createAdminUsersService({ clock = () => new Date() } = {}) {
         const guard = await AdminSecurityState.findOneAndUpdate({ _id: ADMIN_SECURITY_STATE_ID,
           revision: { $lt: Number.MAX_SAFE_INTEGER } }, { $inc: { revision: 1 } }, { session });
         if (!guard) throw capacityConflict();
-        await fenceAdmin(auth, session, now);
+        await fenceActiveAdmin({ auth, session, now });
         const user = await User.findById(userId).select(`${adminUserProjection} emailVerifiedAt +tokenVersion`)
           .session(session);
         if (!user) throw missingUser();

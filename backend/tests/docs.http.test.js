@@ -22,7 +22,17 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 56);
+  assert.equal(Object.keys(json.body.paths).length, 61);
+  for (const [method, path] of [['post', '/admin/orders/{orderId}/refunds'],
+    ['get', '/admin/refunds'], ['get', '/admin/refunds/{refundId}']]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
+  for (const [method, path] of [['post', '/admin/courses/{courseId}/archive'],
+    ['patch', '/admin/courses/{courseId}/access-policy']]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
   for (const [method, path] of [['get', '/admin/users'], ['get', '/admin/users/{userId}'],
     ['patch', '/admin/users/{userId}/status']]) {
     assert.ok(json.body.paths[path]?.[method]);

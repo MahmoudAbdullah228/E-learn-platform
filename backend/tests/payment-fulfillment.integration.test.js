@@ -447,3 +447,15 @@ test('financial and inbox uniqueness/immutability guards reject accidental mutat
   await assert.rejects(WebhookEvent.updateOne({ eventId: 'evt_success' },
     { $set: { 'payload.amountMinor': 1 } }));
 });
+
+test('trusted payment admitted before archive or block is fulfilled exactly once without bypassing later access policy', async () => {
+  const { order, raw, course } = await fixture();
+  await Course.updateOne({ _id: course.id }, { $set: { status: 'archived', archivedAt: clock(), accessStatus: 'blocked' } });
+  markPaid(raw); await accept(event(raw)); await worker().processNext();
+  await accept(event(raw, 'evt_after_archive_duplicate')); await worker().processNext();
+  assert.equal((await Order.findById(order.id)).status, 'paid');
+  assert.equal(await Enrollment.countDocuments({ sourceOrderId: order.id }), 1);
+  assert.equal(await EarningEntry.countDocuments({ orderId: order.id }), 1);
+  const unchanged = await Course.findById(course.id);
+  assert.equal(unchanged.status, 'archived'); assert.equal(unchanged.accessStatus, 'blocked');
+});

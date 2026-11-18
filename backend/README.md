@@ -14,6 +14,18 @@ DTOs, audited status revisions, transactional session revocation and concurrent 
 protection. See [S3-03 behavior and verification](docs/sprint_3_admin_users.md).
 The local OpenAPI/frontend handoff now include these operations; Staging acceptance remains pending.
 
+S3-04 adds admin course archive and an independent legal/security access policy. Archived
+courses retain active learner media/progress access while rejecting discovery and new
+enrollment. Explicit access blocks deny new credentials, including reviewer credentials;
+unblock never republishes or repairs unavailable media. See [S3-04 contract and verification](docs/sprint_3_course_access.md).
+Local OpenAPI is 1.2.0; no unarchive or destructive course-delete API is introduced.
+
+S3-05 adds durable admin refund request/read contracts, scoped holds, replay protection and
+a tested bounded Stripe refund adapter. The default application provider keeps refund
+issuance disabled pending S3-06 atomic finalization/recovery; this is not an `.env` toggle.
+Legacy financial evidence is never inferred from paidAt. See [S3-05 scope and verification](docs/sprint_3_refund_requests.md).
+Local OpenAPI is now 1.3.0. No final refund accounting/access effect is activated by this Story.
+
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)

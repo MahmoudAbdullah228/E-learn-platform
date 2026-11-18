@@ -104,7 +104,8 @@ Tests use `_test` replica-set data
 and fake providers; privileged collection deletion is limited to explicit isolated fixtures.
 
 At capture the next Story was S3-03; it is now implemented locally with
-[separate evidence](sprint_3_admin_users.md), and S3-04 is next. Refund provider processing, real policy activation,
+[separate evidence](sprint_3_admin_users.md). S3-04 also has [local evidence](sprint_3_course_access.md);
+S3-05 is next. Refund provider processing, real policy activation,
 eligibility, payouts, repurchase, Staging and commercial approval are **not completed** by
 this foundation. No provider-account action was performed. S3-01/S3-02 were subsequently
 committed/pushed as `afaf965` by explicit user request; S3-03 is a separate local change.

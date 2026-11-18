@@ -4,6 +4,7 @@ import { MediaAsset } from '../../models/MediaAsset.js';
 import { Section } from '../../models/Section.js';
 import { VideoAssetState } from '../../models/VideoAssetState.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { hasCourseAccess } from '../courses/courseAccess.policy.js';
 
 function notReady(field, message) {
   throw new ApiError(409, 'COURSE_NOT_READY', 'Course is not ready for review or publication',
@@ -11,6 +12,9 @@ function notReady(field, message) {
 }
 
 export async function assertCourseReady(course, session) {
+  if (!hasCourseAccess(course)) {
+    throw new ApiError(409, 'COURSE_ACCESS_BLOCKED', 'Course access is currently restricted');
+  }
   if (!course.title || !course.description || !course.shortDescription
       || !course.level || !course.language || !Number.isSafeInteger(course.priceMinor)
       || course.priceMinor < 0 || course.currency !== 'EGP') {

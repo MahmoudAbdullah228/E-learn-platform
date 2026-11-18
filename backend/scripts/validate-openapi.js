@@ -10,6 +10,32 @@ const contract = await parse(contractPath);
 
 assert.equal(validation.valid, true, 'OpenAPI schema validation failed');
 assert.equal(contract.openapi, '3.1.0');
+for (const [method, path, success] of [['post', '/admin/orders/{orderId}/refunds', '202'],
+  ['get', '/admin/refunds', '200'], ['get', '/admin/refunds/{refundId}', '200']]) {
+  const operation = contract.paths[path]?.[method];
+  assert.ok(operation, `${method} ${path} is missing`);
+  assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
+  for (const status of [success, '400', '401', '403', '429', '500', '503']) {
+    assert.ok(operation.responses[status], `${path} response ${status} is missing`);
+  }
+  assert.equal(operation.responses[success].headers['Cache-Control'].schema.const, 'no-store');
+}
+assert.ok(contract.paths['/admin/orders/{orderId}/refunds'].post.parameters
+  .some(parameter => parameter.name === 'Idempotency-Key' && parameter.required));
+assert.equal(contract.components.schemas.CreateRefundInput.additionalProperties, false);
+for (const [method, path] of [['post', '/admin/courses/{courseId}/archive'],
+  ['patch', '/admin/courses/{courseId}/access-policy']]) {
+  const operation = contract.paths[path]?.[method];
+  assert.ok(operation, `${method} ${path} is missing`);
+  assert.deepEqual(operation.security, [{ bearerAuth: [] }]);
+  assert.equal(operation.requestBody.required, true);
+  for (const status of ['200', '400', '401', '403', '404', '409', '429', '500', '503']) {
+    assert.ok(operation.responses[status], `${path} response ${status} is missing`);
+  }
+  assert.equal(operation.responses['200'].headers['Cache-Control'].schema.const, 'no-store');
+}
+assert.equal(contract.components.schemas.CourseAccessInput.additionalProperties, false);
+assert.ok(contract.components.schemas.CourseFields.properties.status.enum.includes('archived'));
 for (const [method, path] of [['get', '/admin/users'], ['get', '/admin/users/{userId}'],
   ['patch', '/admin/users/{userId}/status']]) {
   const operation = contract.paths[path]?.[method];

@@ -12,6 +12,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { toPagination } from '../../utils/pagination.js';
 import { toEnrollment, toLibraryCourse } from './enrollment.presenter.js';
 import { readProgressSummaries } from '../progress/progress.read.service.js';
+import { publicCourseFilter, isLearningCourse, courseAvailabilityCode } from '../courses/courseAccess.policy.js';
 
 const options = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 const transaction = work => mongoose.connection.transaction(work, options);
@@ -28,7 +29,7 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
         { $inc: { checkoutRevision: 1 } }, { session, timestamps: false }).select('_id');
         if (!student) throw new ApiError(403, 'ENROLLMENT_NOT_ALLOWED',
           'A verified active student account is required');
-        const course = await Course.findOneAndUpdate({ _id: courseId, status: 'published' },
+        const course = await Course.findOneAndUpdate(publicCourseFilter({ _id: courseId }),
           { $inc: { checkoutRevision: 1 } }, { session, timestamps: false });
         if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
         if (course.instructorId.toString() === studentId.toString()) {
@@ -61,14 +62,15 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
           .skip((query.page - 1) * query.limit).limit(query.limit).session(session).lean();
         const total = await Enrollment.countDocuments(filter).session(session);
         const courses = await Course.find({ _id: { $in: enrollments.map(e => e.courseId) },
-          status: 'published' }).select('_id status slug title shortDescription level language coverAssetId instructorId')
+          status: { $in: ['published', 'archived'] } })
+          .select('_id status accessStatus unavailableAt archivedAt slug title shortDescription level language coverAssetId instructorId')
           .session(session).lean();
         const covers = await MediaAsset.find({ _id: { $in: courses.map(c => c.coverAssetId).filter(Boolean) },
           status: 'ready', purpose: 'course_cover', resourceType: 'image', deliveryType: 'upload' })
           .select('_id targetId ownerId publicId format').session(session).lean();
         const courseMap = byId(courses); const coverMap = byId(covers);
         const summaries = await readProgressSummaries({ enrollments: enrollments.filter(e =>
-          e.status === 'active' && courseMap.has(String(e.courseId))), session });
+          e.status === 'active' && isLearningCourse(courseMap.get(String(e.courseId)))), session });
         const lastLessons = await Lesson.find({ _id: { $in: enrollments.map(e => e.lastLessonId).filter(Boolean) } })
           .select('_id sectionId').session(session).lean();
         const lastSections = await Section.find({ _id: { $in: lastLessons.map(l => l.sectionId) },
@@ -88,7 +90,8 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
           const progress = summaries.get(String(enrollment._id)) ?? null;
           return { enrollment: toEnrollment(enrollment, { lastLessonId, completedAt: progress?.completedAt ?? null }),
             course: toLibraryCourse(course, coverUrl), progress,
-            available: enrollment.status === 'active' && Boolean(course) };
+            available: enrollment.status === 'active' && isLearningCourse(course),
+            availabilityCode: courseAvailabilityCode(course, enrollment.status) };
         }), pagination: toPagination(query, total) };
       });
     },
@@ -98,10 +101,11 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
         const enrollment = await Enrollment.findOne({ studentId, courseId, status: 'active' })
           .session(session).lean();
         if (!enrollment) throw new ApiError(404, 'ENROLLMENT_NOT_FOUND', 'Enrollment was not found');
-        const course = await Course.findOne({ _id: courseId, status: 'published' })
-          .select('_id status slug title shortDescription level language description requirements learningOutcomes instructorId')
+        const course = await Course.findById(courseId)
+          .select('_id status accessStatus unavailableAt archivedAt slug title shortDescription level language description requirements learningOutcomes instructorId')
           .session(session).lean();
-        if (!course) throw new ApiError(409, 'COURSE_UNAVAILABLE', 'The enrolled course is currently unavailable');
+        if (!isLearningCourse(course)) throw new ApiError(409, courseAvailabilityCode(course),
+          'The enrolled course is currently unavailable');
         const sections = await Section.find({ courseId }).select('_id title position')
           .sort({ position: 1, _id: 1 }).session(session).lean();
         const lessons = await Lesson.find({ sectionId: { $in: sections.map(s => s._id) } })

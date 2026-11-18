@@ -10,6 +10,7 @@ import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { splitCourseRevenue } from '../../utils/money.js';
 import { toCheckoutOrder } from './checkout.presenter.js';
+import { publicCourseFilter } from '../courses/courseAccess.policy.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 const leaseMs = 120_000;
@@ -62,7 +63,7 @@ export function createCheckoutService({ provider, clock = () => new Date(),
       signal.throwIfAborted();
       if (!student) throw new ApiError(403, 'CHECKOUT_NOT_ALLOWED',
         'A verified active student account is required');
-      const course = await Course.findOneAndUpdate({ _id: courseId, status: 'published' },
+      const course = await Course.findOneAndUpdate(publicCourseFilter({ _id: courseId }),
         { $inc: { checkoutRevision: 1 } }, { session, timestamps: false });
       signal.throwIfAborted();
       if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');

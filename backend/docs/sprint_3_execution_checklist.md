@@ -72,8 +72,8 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 | S3-01 | الإعداد المحلي مكتمل؛ team/Staging/capacity inputs مفتوحة منفصلة | 432 PASS + policy/ADRs/contracts/gaps/readiness؛ لا ادعاء قبول Staging |
 | S3-02 | مكتملة محليًا؛ أساس داخلي فقط، دون HTTP/provider activation | 462 PASS + lint/OpenAPI؛ الفهارس وrollback/concurrency وفحص legacy؛ [الدليل](sprint_3_financial_foundation.md) |
 | S3-03 | مكتملة محليًا؛ 484 PASS + lint/OpenAPI | directory/status + audit/session fencing؛ [الدليل](sprint_3_admin_users.md)؛ B01 Staging لم ينفّذ |
-| S3-04 | لم تبدأ | archived مشتريه يحتفظ بالوصول؛ شراء جديد ممنوع |
-| S3-05 | لم تبدأ | refund reservation/idempotency/provider ambiguity محفوظة |
+| S3-04 | مكتملة محليًا؛ 509 PASS + lint/OpenAPI | archive/access policy عبر جميع المسارات؛ [الدليل](sprint_3_course_access.md)؛ قبول B02 Staging لم ينفّذ |
+| S3-05 | مكتملة محليًا؛ 542 PASS + lint/OpenAPI؛ Stripe issuance معطلة لحين S3-06 | reservation/replay/hold/audit/provider boundary؛ [الدليل](sprint_3_refund_requests.md) |
 | S3-06 | لم تبدأ | signed events/replay/recovery والـledger متسقة |
 | S3-07 | لم تبدأ | old refund لا يلغي repurchase جديدًا |
 | S3-08 | لم تبدأ | eligibility بالسياسة الأصلية، holds وcarry-forward صحيحان |
@@ -101,6 +101,16 @@ commit/push. التالي S3-03، مع بقاء بوابات Staging والتش�
 وتحديث OpenAPI 1.1.0 وfrontend handoff. `npm run verify`: **484 PASS** دون fail/skip/
 cancel، 156.85 ثانية. S3-01/S3-02 رُفعا سابقًا في `afaf965` بطلب المستخدم؛ تغييرات
 S3-03 محلية دون commit/push. التالي **S3-04**؛ قبول Staging B01 ما زال مفتوحًا.
+
+تحديث S3-04: اكتملت الأرشفة وسياسة الحظر المستقلة محليًا، مع توحيد الكتالوج/الشراء/
+المكتبة/الوسائط/التقدم وتحديث OpenAPI 1.2.0 وhandoff. المراجعة الكاملة **509 PASS**
+مع lint/OpenAPI، 145.79 ثانية. S3-03 رُفعت لاحقًا في `e6f9f5b` بطلب المستخدم؛ تغييرات
+S3-04 محلية دون commit/push. التالي **S3-05**؛ B02 Staging لم ينفّذ.
+
+تحديث S3-05: اكتملت العقود المحمية للطلب/القراءة وStripe adapter وreservation/hold/
+audit/replay، مع تعطيل إصدار Stripe الفعلي لحين S3-06. المراجعة الكاملة **542 PASS**
+مع lint/OpenAPI، 145.01 ثانية، دون fail/skip/cancel. OpenAPI 1.3.0 وhandoff محدثان.
+S3-04/S3-05 ما زالا محليين دون commit/push؛ التالي **S3-06** للـreducer/events/recovery.
 
 1. Models/indexes، أو بيان عدم الحاجة لموديل/فهرس جديد؛ Zod request validation.
 2. Services/policies/adapters ثم controllers/routes/middlewares؛ لا provider call داخل transaction callback قابل للإعادة.

@@ -75,7 +75,8 @@ export function createFinanceFoundationService({ clock = () => new Date() } = {}
       const existing = await FinancialHold.findOne({ instructorId: context.instructorId,
         sourceType: data.sourceType, sourceId: data.sourceId }).session(context.session);
       if (existing) {
-        if (existing.resolvedAt || existing.reasonCode !== data.reasonCode) throw conflict();
+        if (existing.resolvedAt || existing.reasonCode !== data.reasonCode
+            || (existing.paymentId?.toString() ?? null) !== data.paymentId) throw conflict();
         return existing;
       }
       const [hold] = await FinancialHold.create([{ ...data, instructorId: context.instructorId,

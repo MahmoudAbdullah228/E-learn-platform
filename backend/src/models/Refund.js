@@ -25,6 +25,17 @@ const schema = new mongoose.Schema({
   reason: { type: String, default: null, trim: true, minlength: 10, maxlength: 500,
     validate: value => value == null || !containsUnsafeCharacter(value) },
   overrideWindow: { type: Boolean, required: true, default: false },
+  policyVersionId: financialReference('FinancialPolicyVersion', false),
+  refundWindowSeconds: { ...safeIntegerField(1), default: null, max: 365 * 86400,
+    validate: value => value == null || Number.isSafeInteger(value) },
+  paymentConfirmedAt: { type: Date, default: null },
+  refundDeadlineAt: { type: Date, default: null },
+  paymentIntentId: { type: String, default: null, select: false, maxlength: 255, match: /^pi_[A-Za-z0-9_]+$/ },
+  dispatchStartedAt: { type: Date, default: null, select: false },
+  providerStatus: { type: String, default: null, select: false,
+    enum: ['pending', 'requires_action', 'succeeded', 'failed', 'canceled', null] },
+  providerCreatedAt: { type: Date, default: null, select: false },
+  providerObservedAt: { type: Date, default: null, select: false },
   status: { type: String, enum: refundStatuses, required: true, default: 'requested' },
   completedAt: { type: Date, default: null },
   lastReconciledAt: { type: Date, default: null },
@@ -54,8 +65,9 @@ schema.pre('validate', function validateRefund() {
 });
 protectFinancialHistory(schema, { immutableFields: ['orderId', 'paymentId', 'instructorId',
   'provider', 'source', 'kind', 'amountMinor', 'paymentAmountMinor', 'currency', 'initiatedBy',
-  'idempotencyKey', 'requestFingerprint', 'providerIdempotencyKey', 'reason', 'overrideWindow'] });
-protectWriteOnce(schema, ['providerRefundId', 'completedAt']);
+  'idempotencyKey', 'requestFingerprint', 'providerIdempotencyKey', 'reason', 'overrideWindow',
+  'policyVersionId', 'refundWindowSeconds', 'paymentConfirmedAt', 'refundDeadlineAt', 'paymentIntentId'] });
+protectWriteOnce(schema, ['providerRefundId', 'completedAt', 'dispatchStartedAt', 'providerCreatedAt']);
 schema.index({ provider: 1, providerRefundId: 1 }, { unique: true,
   partialFilterExpression: { providerRefundId: { $type: 'string' } } });
 schema.index({ provider: 1, providerIdempotencyKey: 1 }, { unique: true,
@@ -68,4 +80,6 @@ schema.index({ paymentId: 1 }, { unique: true,
   ] } } });
 schema.index({ status: 1, nextAttemptAt: 1, leaseUntil: 1 });
 schema.index({ orderId: 1, createdAt: -1, _id: -1 });
+schema.index({ createdAt: -1, _id: -1 });
+schema.index({ status: 1, createdAt: -1, _id: -1 });
 export const Refund = mongoose.model('Refund', schema);

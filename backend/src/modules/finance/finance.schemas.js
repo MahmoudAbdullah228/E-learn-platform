@@ -39,6 +39,7 @@ export const financialRangeSchema = z.object({ from: z.date(), to: z.date() }).s
     'A positive range of at most 366 days is required');
 
 export const holdInputSchema = z.object({
+  paymentId: financialIdSchema.nullable().default(null),
   sourceType: z.enum(['refund', 'payment', 'payout', 'dispute', 'legacy', 'operations']),
   sourceId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/),
   reasonCode: reasonCodeSchema,

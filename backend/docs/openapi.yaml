@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.1.0
+  version: 1.3.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -22,7 +22,13 @@ info:
     S2-11 adds enrollment-bound lesson completion/resume and dynamic progress reads.
     S3-03 adds admin-only user search/detail and transactional suspension/reactivation,
     audited with current session checks and protection against losing usable administrators.
-    Refunds and payouts remain later stories.
+    S3-04 adds audited course archive and independent legal/security access policy.
+    Archived courses retain active learner access but reject discovery, preview and new enrollment.
+    Access blocks deny new credentials for learners and reviewers alike; unblock never republishes.
+    S3-05 adds durable admin full-refund request/read contracts and a tested Stripe adapter.
+    Application Stripe refund issuance remains disabled until S3-06 atomic finalization/recovery.
+    Legacy orders without frozen policy/trusted confirmation are never guessed from paidAt.
+    Final refund accounting/access effects and payouts remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -45,6 +51,10 @@ tags:
     description: Authenticated user profile
   - name: Admin users
     description: Administrative user directory and audited account status decisions
+  - name: Course administration
+    description: Audited course archive and legal/security access policy
+  - name: Refunds
+    description: Durable full-refund reservations and safe admin reads; monetary activation awaits S3-06
   - name: Instructor applications
     description: Student applications and administrative review
   - name: Instructors
@@ -74,6 +84,246 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /admin/orders/{orderId}/refunds:
+    post:
+      operationId: requestFullRefund
+      tags: [Refunds]
+      summary: Reserve an audited full refund with a stable accepted receipt
+      description: |
+        Requires a current verified active admin, rechecked inside the financial transaction.
+        The default application Stripe provider returns 503 REFUND_PROCESSING_NOT_ENABLED
+        until S3-06 finalization/recovery is integrated; there is no environment toggle or
+        client bypass. The following accepted behavior is implemented/tested through an
+        enabled injected provider. No query parameters or client monetary/provider fields.
+        Idempotency-Key is required (16-128 ASCII letters/digits/dot/underscore/hyphen),
+        scoped to actor/refund-create. Same key and normalized order/reason/override returns
+        the original 202 requested receipt, even if current state changed. Changed intent
+        is 409 IDEMPOTENCY_CONFLICT; never change the key to retry an uncertain outcome.
+        Amount/EGP/payment identity and frozen policy come from immutable server records.
+        Requires paid/succeeded matching payment, policy-bound sale, trusted matching payment
+        confirmation and derived deadline. Missing legacy mapping is not inferred from paidAt.
+        At or after deadline, explicit overrideWindow true needs a policy allowing the exception;
+        it overrides time only. Unsupported partial/dispute/legacy holds require review.
+        Reservation, scoped financial hold and audit commit before any provider call. A bounded
+        single issuance attempt uses a separate stored server key; pending/unknown results
+        retain the hold. HTTP 202 means durable acceptance, never money returned. Even provider
+        success waits for the S3-06 atomic financial/access reducer before local succeeded.
+        There is no refund retry/cancel/complete endpoint here. All outcomes are no-store.
+        Per-user write quota uses ADMIN_WRITE_RATE_LIMIT settings (default 30/minute).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderId' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRefundInput' }
+            example: { reason: Customer refund following a documented administrative review, overrideWindow: false }
+      responses:
+        '202':
+          description: Original durable accepted receipt, including an identical replay
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundAcceptedResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: IDEMPOTENCY_CONFLICT, REFUND_NOT_ALLOWED, REFUND_IN_PROGRESS, REFUND_ALREADY_COMPLETED, REFUND_WINDOW_EXPIRED, REFUND_OVERRIDE_NOT_ALLOWED, or FINANCIAL_RECONCILIATION_REQUIRED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: REFUND_PROCESSING_NOT_ENABLED, REFUND_PROVIDER_UNAVAILABLE, REFUND_SERVICE_UNAVAILABLE, RATE_LIMIT_UNAVAILABLE or SERVICE_SHUTTING_DOWN before durable acceptance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/refunds:
+    get:
+      operationId: listAdminRefunds
+      tags: [Refunds]
+      summary: List persisted refund states as administrator
+      description: |
+        Current verified active admin session. No provider call or financial mutation.
+        Sort createdAt/id descending, limit+1 cursor pagination. Keep status/orderId filters
+        unchanged when reusing the signed opaque cursor. Lists are live, not a frozen export.
+        No provider IDs/keys, raw evidence, reasons, actors or lease fields are returned.
+        pending includes provider evidence awaiting atomic S3-06 finalization. All outcomes
+        are no-store. GET list/detail share a per-user PRIVATE_READ_RATE_LIMIT quota.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        - name: orderId
+          in: query
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Safe current refund state page
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/refunds/{refundId}:
+    get:
+      operationId: getAdminRefund
+      tags: [Refunds]
+      summary: Read one safe current refund state
+      description: Current verified active admin session, no query parameters, no-store, shared refund read quota. Does not contact Stripe or finalize a refund.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: refundId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '200':
+          description: Safe persisted refund state
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/courses/{courseId}/archive:
+    post:
+      operationId: archiveCourse
+      tags: [Course administration]
+      summary: Archive a published or provider-unavailable course
+      description: |
+        Current verified active admin session required and fenced in the transaction.
+        Supply the policy revision from GET /admin/courses/{courseId}; this tracks archive/
+        access-policy changes, not every curriculum edit. Archive stops catalog/detail,
+        anonymous preview, new Checkout and free-enrollment admissions. Active existing
+        enrolled students retain library/media/progress unless blocked or media-unavailable.
+        A previously admitted paid reservation can still settle; trusted payment accounting
+        is not dropped. No unarchive or hard-delete operation is introduced. Draft/pending/
+        rejected courses return INVALID_COURSE_STATE. A current-revision already-archived
+        request returns explicit no-op; stale revisions always conflict. Audit and policy
+        commit together. No query parameters or Idempotency-Key support.
+        All outcomes use Cache-Control no-store. Both course-policy mutations share the
+        per-user ADMIN_WRITE_RATE_LIMIT quota across course IDs (default 30/minute).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArchiveCourseInput' }
+      responses:
+        '200':
+          description: Committed archive or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoursePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, INVALID_COURSE_STATE, COURSE_POLICY_REQUIRES_REVIEW, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/courses/{courseId}/access-policy:
+    patch:
+      operationId: changeCourseAccessPolicy
+      tags: [Course administration]
+      summary: Block or unblock course access for a legal or security reason
+      description: |
+        Current verified active admin session required and fenced in the transaction.
+        Does not change publication status, archivedAt, unavailableAt, media readiness,
+        enrollment, purchases, progress or financial history. Block hides the catalog and
+        denies new preview/Checkout/free enrollment as well as enrolled learning/progress.
+        Owner/admin review can inspect metadata but cannot bypass the block for video/PDF.
+        Unblock never unarchives, publishes a draft or repairs unavailable media. Reasons/
+        actor metadata are admin-only; learners see safe availability codes. Existing issued
+        credentials can survive until expiry (video <=15 minutes, PDF <=60 seconds).
+        Same-status current-revision requests are explicit no-ops; stale revisions return
+        STATE_CONFLICT even if status matches. No query parameters or extra body fields.
+        All outcomes use Cache-Control no-store. Shares the archive per-user write quota.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CourseAccessInput' }
+      responses:
+        '200':
+          description: Committed access policy or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoursePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, COURSE_POLICY_REQUIRES_REVIEW, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /admin/users:
     get:
       operationId: listAdminUsers
@@ -223,7 +473,7 @@ paths:
       tags: [Learning progress]
       summary: Set or clear completion of an enrolled course lesson
       description: |
-        Requires a current verified active student session and active enrollment in a published
+        Requires a current verified active student session and active enrollment in a published or archived
         course. Preview/owner/admin review access grants no progress-write exemption.
         completed must be a real boolean; no query parameters are accepted. Repeated true
         preserves the original completion timestamp; false clears it. Resume position is
@@ -231,6 +481,7 @@ paths:
         server proof of viewing video. The course percentage uses its current existing lessons,
         excludes orphan/foreign progress, and floors to two decimals (zero lessons is 0%).
         Completion/resume share a user-wide quota of 60/min across all courses/lessons.
+        Legal/security block or unavailable media denies new progress writes; archive alone does not.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/CourseId' }
@@ -266,7 +517,7 @@ paths:
       tags: [Learning progress]
       summary: Save the enrolled student's resume lesson
       description: |
-        Requires a verified active student, live session, active enrollment and published
+        Requires a verified active student, live session, active enrollment and published or archived
         course. The lesson must still exist in this exact course. No query parameters or
         client-selected enrollment/student/timestamps are accepted. Repeated requests are
         idempotent. Saving resume position never marks a lesson completed.
@@ -305,8 +556,10 @@ paths:
       summary: Issue a short-lived signed Mux playback token
       description: |
         A published preview lesson allows anonymous video playback, never PDF downloads.
-        Other published lessons require an active student enrollment. An active approved
+        Other published lessons and archived courses require an active student enrollment. An active approved
         course owner or administrator may review unpublished content without enrollment.
+        Archived lessons have no public preview. A legal/security block denies new credentials
+        even to reviewers. Unavailable media is never repaired by unblocking course access.
         A supplied invalid Authorization header always returns 401 (no anonymous fallback).
         Tokens expire after at most 900 seconds; renew through this endpoint. Revocation
         prevents new issuance, not the use of a token already issued until its expiry.
@@ -336,13 +589,14 @@ paths:
       tags: [Learning access]
       summary: Issue a temporary authenticated PDF download URL
       description: |
-        Requires an active student enrollment in a published course, or the active approved
+        Requires an active student enrollment in a published or archived course, or the active approved
         course owner/administrator reviewing its content. Preview flags never grant PDF access.
         The attachment must be ready, authenticated, owned by the course instructor and attached
         to this exact lesson. assetId is a MediaAsset ID, not a provider ID; obtain it from the
         authenticated learning outline. No query parameters are accepted.
         URLs expire after at most 60 seconds. Request a new URL on expiry; never store one permanently.
         Bearer URLs remain usable until expiry after enrollment/session/account revocation.
+        Legal/security block overrides learner/owner/admin issuance; it never grants a PDF preview.
         Download and playback requests share the same authenticated user quota (30/min).
       security: [{ bearerAuth: [] }]
       parameters:
@@ -416,7 +670,7 @@ paths:
       description: |
         Title search is normalized Arabic/English prefix matching, not full-text or fuzzy search.
         Archived categories do not hide already published courses. Draft, pending, rejected,
-        and provider-unavailable courses are excluded.
+        provider-unavailable, archived and legal/security-blocked courses are excluded.
       tags: [Catalog]
       parameters:
         - in: query
@@ -504,7 +758,7 @@ paths:
       parameters:
         - in: query
           name: status
-          schema: { type: string, enum: [draft, pending_review, published, rejected, unavailable], default: pending_review }
+          schema: { type: string, enum: [draft, pending_review, published, rejected, unavailable, archived], default: pending_review }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -1269,7 +1523,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [draft, pending_review, published, rejected, unavailable]
+            enum: [draft, pending_review, published, rejected, unavailable, archived]
             default: draft
         - name: page
           in: query
@@ -1869,10 +2123,13 @@ paths:
       summary: List the authenticated student's enrollments
       description: |
         Snapshot-consistent pagination, ordered enrolledAt descending then ID descending.
-        Only the current user's records. A nonpublished/deleted course remains a historical
+        Only the current user's records. Published and archived courses preserve active learner access.
+        A blocked, unavailable, draft or deleted course remains a historical
         enrollment with course null and available false, without leaking draft content.
         Each available active enrollment has dynamic current-curriculum progress;
         unavailable/revoked entries have progress null. Zero lessons means zero percent.
+        availabilityCode is AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE or
+        ENROLLMENT_REVOKED; raw legal/security reasons never appear in this student response.
         All private reads share PRIVATE_READ_RATE_LIMIT_MAX (default 120 per minute) per user.
         Cache-Control no-store applies to successes and errors.
       security: [{ bearerAuth: [] }]
@@ -1897,7 +2154,7 @@ paths:
     get:
       operationId: getMyLearningCourse
       tags: [Learning library]
-      summary: Read the enrolled student's published learning outline
+      summary: Read the enrolled student's published or archived learning outline
       description: |
         Active own enrollment required; missing/revoked/non-owned enrollment returns 404.
         An unavailable/nonpublished/deleted course returns 409 COURSE_UNAVAILABLE.
@@ -2140,12 +2397,135 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     ServiceUnavailableError:
-      description: Mux configuration or service is temporarily unavailable
+      description: A required service, provider, configuration or request quota store is temporarily unavailable
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    CreateRefundInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 500, description: Trimmed plain text; raw control and Unicode format characters are rejected }
+        overrideWindow: { type: boolean, default: false }
+    RefundAccepted:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, amountMinor, currency, status, createdAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        orderId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        status: { const: requested }
+        createdAt: { type: string, format: date-time }
+    Refund:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, amountMinor, currency, status, createdAt, updatedAt, completedAt, failureCode]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        orderId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        status: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        failureCode: { type: [string, 'null'], enum: [REFUND_PROVIDER_UNAVAILABLE, REFUND_EVIDENCE_MISMATCH, REFUND_PROCESSING_FAILED, REFUND_REQUIRES_REVIEW, null] }
+    RefundAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund]
+          properties:
+            refund: { $ref: '#/components/schemas/RefundAccepted' }
+        message: { type: string }
+    RefundResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund]
+          properties:
+            refund: { $ref: '#/components/schemas/Refund' }
+    RefundListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refunds, pagination]
+          properties:
+            refunds: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Refund' } }
+            pagination:
+              type: object
+              additionalProperties: false
+              required: [hasMore, nextCursor]
+              properties:
+                hasMore: { type: boolean }
+                nextCursor: { type: [string, 'null'], maxLength: 1024 }
+    ArchiveCourseInput:
+      type: object
+      additionalProperties: false
+      required: [reason, expectedRevision]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 500, description: Trimmed plain text; raw control and Unicode format characters are rejected }
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    CourseAccessInput:
+      type: object
+      additionalProperties: false
+      required: [accessStatus, reason, expectedRevision]
+      properties:
+        accessStatus: { type: string, enum: [available, blocked] }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    CoursePolicyFields:
+      type: object
+      required: [id, status, accessStatus, revision, archivedAt, unavailableAt, archivedBy, archiveReason, accessChangedAt, accessChangedBy, accessReason]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        status: { type: string, enum: [draft, pending_review, published, rejected, unavailable, archived] }
+        accessStatus: { type: string, enum: [available, blocked] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        archivedAt: { type: [string, 'null'], format: date-time }
+        unavailableAt: { type: [string, 'null'], format: date-time }
+        archivedBy: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        archiveReason: { type: [string, 'null'], description: Admin-only archive reason }
+        accessChangedAt: { type: [string, 'null'], format: date-time }
+        accessChangedBy: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        accessReason: { type: [string, 'null'], description: Admin-only legal/security policy reason }
+    CoursePolicy:
+      allOf: [{ $ref: '#/components/schemas/CoursePolicyFields' }]
+      unevaluatedProperties: false
+    AdminCourse:
+      allOf:
+        - { $ref: '#/components/schemas/CourseFields' }
+        - { $ref: '#/components/schemas/CoursePolicyFields' }
+      unevaluatedProperties: false
+    CoursePolicyResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [course]
+          properties:
+            course: { $ref: '#/components/schemas/CoursePolicy' }
+        message: { type: string }
     AdminUser:
       type: object
       additionalProperties: false
@@ -2309,8 +2689,10 @@ components:
             enrollment: { $ref: '#/components/schemas/Enrollment' }
     LibraryCourse:
       type: object
-      required: [id, slug, title, shortDescription, level, language, coverUrl]
+      required: [id, slug, title, shortDescription, level, language, coverUrl, status, archivedAt]
       properties:
+        status: { type: string, enum: [published, archived] }
+        archivedAt: { type: [string, 'null'], format: date-time }
         id: { type: string }
         slug: { type: string }
         title: { type: string }
@@ -2334,12 +2716,13 @@ components:
               items:
                 type: object
                 additionalProperties: false
-                required: [enrollment, course, available, progress]
+                required: [enrollment, course, available, availabilityCode, progress]
                 properties:
                   progress:
                     oneOf: [{ $ref: '#/components/schemas/ProgressSummary' }, { type: 'null' }]
                   enrollment: { $ref: '#/components/schemas/Enrollment' }
                   available: { type: boolean }
+                  availabilityCode: { type: string, enum: [AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE, ENROLLMENT_REVOKED] }
                   course:
                     oneOf:
                       - allOf: [{ $ref: '#/components/schemas/LibraryCourse' }]
@@ -2689,7 +3072,7 @@ components:
           type: object
           required: [course, instructor, sections, reviewEvents]
           properties:
-            course: { $ref: '#/components/schemas/Course' }
+            course: { $ref: '#/components/schemas/AdminCourse' }
             instructor:
               oneOf:
                 - type: object
@@ -3307,6 +3690,9 @@ components:
       minProperties: 1
       unevaluatedProperties: false
     Course:
+      allOf: [{ $ref: '#/components/schemas/CourseFields' }]
+      unevaluatedProperties: false
+    CourseFields:
       type: object
       required:
         - id
@@ -3325,6 +3711,9 @@ components:
         - priceMinor
         - currency
         - status
+        - accessStatus
+        - revision
+        - archivedAt
         - submittedAt
         - reviewedAt
         - publishedAt
@@ -3333,7 +3722,6 @@ components:
         - rejectionReason
         - createdAt
         - updatedAt
-      additionalProperties: false
       properties:
         id:
           type: string
@@ -3400,7 +3788,10 @@ components:
           const: EGP
         status:
           type: string
-          enum: [draft, pending_review, published, rejected, unavailable]
+          enum: [draft, pending_review, published, rejected, unavailable, archived]
+        accessStatus: { type: string, enum: [available, blocked] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        archivedAt: { type: [string, 'null'], format: date-time }
         submittedAt: { type: [string, 'null'], format: date-time }
         reviewedAt: { type: [string, 'null'], format: date-time }
         publishedAt: { type: [string, 'null'], format: date-time }

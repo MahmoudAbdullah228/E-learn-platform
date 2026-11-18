@@ -14,7 +14,12 @@ Stories. The snapshot below is not a claim that those models are still absent to
 
 S3-03 follow-up: admin user directory/status workflow, audit and session fencing are now
 implemented locally; G09 implementation is covered by [S3-03 evidence](sprint_3_admin_users.md).
-Its Staging B01/qualified-review acceptance remains open. S3-04 is the current next Story.
+Its Staging B01/qualified-review acceptance remains open. S3-04 archive/access policy now
+covers the G10 implementation gap; [S3-04 evidence](sprint_3_course_access.md). Its B02
+Staging/qualified review remains open. S3-05 adds guarded reservation/read/provider contracts
+for G04 with [separate evidence](sprint_3_refund_requests.md). Its application issuance gate
+remains disabled; G03 trusted confirmation/policy integration and G04 final reducers/recovery
+remain for S3-06/08. Next Story is S3-06, not monetary feature acceptance.
 
 ## 1. New automated baseline — PASS
 
@@ -133,5 +138,5 @@ does not authorize modifying the providers, creating accounts or deployment toda
 
 **S3-01 local preparation is complete; it is not full Staging/product acceptance.** Next:
 S3-02 internal financial foundation was the next step at capture and is now implemented
-locally, followed by S3-03 admin users; current next step is S3-04. S3-18 requires
+locally, followed by S3-03/04 and guarded S3-05 contracts; next step is S3-06. S3-18 requires
 only its remaining gap/evidence work, not rebuilding profile/catalog changes already done.

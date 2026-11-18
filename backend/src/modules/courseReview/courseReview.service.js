@@ -9,6 +9,7 @@ import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { toCourse } from '../courses/course.presenter.js';
 import { assertCourseReady } from './courseReadiness.service.js';
+import { adminCoursePolicyProjection, toCoursePolicy } from '../courseAdministration/courseAdministration.presenter.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 
@@ -117,7 +118,7 @@ export function createCourseReviewService({ clock = () => new Date() } = {}) {
     },
 
     async getForReview({ courseId }) {
-      const course = await Course.findById(courseId).lean();
+      const course = await Course.findById(courseId).select(adminCoursePolicyProjection).lean();
       if (!course) throw notFound();
       const [category, instructor, sections, events] = await Promise.all([
         Category.findById(course.categoryId).lean(),
@@ -137,7 +138,7 @@ export function createCourseReviewService({ clock = () => new Date() } = {}) {
         });
       }
       return {
-        course: toCourse(course, category),
+        course: { ...toCourse(course, category), ...toCoursePolicy(course) },
         instructor: instructor ? { id: instructor._id.toString(), name: instructor.name,
           email: instructor.email } : null,
         sections: sections.map(section => ({ id: section._id.toString(), title: section.title,

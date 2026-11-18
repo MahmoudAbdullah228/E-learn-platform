@@ -1,5 +1,29 @@
 # Sprint 2 delivery evidence
 
+## S3-05 guarded refund request/provider boundary — 2026-11-18
+
+`npm run verify` passed lint, OpenAPI validation and **542 tests, 0 failed, 0 skipped,
+0 cancelled** (145.01 seconds), including 33 S3-05 regressions over the 509-test baseline.
+Targeted security/finance/refund checks passed **66/66** (8.75 seconds) before the final
+three integration cases were added. All DB tests used isolated `_test` replica fixtures;
+SDK/provider interactions were fake. Source: `e6f9f5b` plus uncommitted local S3-04/S3-05
+changes. [S3-05 evidence and activation boundary](sprint_3_refund_requests.md).
+Default application Stripe issuance remains disabled pending S3-06. No provider action,
+financial policy activation, application-database mutation or Staging acceptance occurred.
+Refund B03–B06/B10/B12 and A01–A19 remain NOT RUN; this does not mark them PASS.
+
+## S3-04 course archive/access policy — 2026-11-18
+
+`npm run verify` passed lint, OpenAPI validation and **509 tests, 0 failed, 0 skipped,
+0 cancelled** (145.79 seconds). This adds 25 regressions for archive/block access,
+transaction rollback, cross-module races, quota failures and trusted post-archive payment
+accounting. Source: `e6f9f5b` plus the local uncommitted S3-04 patch on
+`feature/sprint-3-mvp-closure`. A targeted related-module run also passed **140/140**
+(58.60 seconds) before the last three cases were added to the final complete suite.
+Tests used only isolated `_test` replica-set fixtures and fake providers. No application
+users/courses or provider accounts were changed. [S3-04 details](sprint_3_course_access.md).
+Local results do not mark Staging B02 or A01–A19 as PASS; those remain NOT RUN.
+
 ## S3-03 admin user status — 2026-11-18
 
 `npm run verify` passed lint, OpenAPI validation and **484 tests, 0 failed, 0 skipped,

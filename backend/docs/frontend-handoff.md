@@ -1,4 +1,4 @@
-# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-03
+# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-05
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 For coordinated Sprint 2 acceptance, use [the staging runbook](staging-acceptance.md)
@@ -9,6 +9,11 @@ set your client's backend origin explicitly. JSON request bodies require `Conten
 
 | Method | Path | Request | Success |
 | --- | --- | --- | --- |
+| POST | `/admin/orders/:orderId/refunds` | Admin Bearer + Idempotency-Key + `{reason,overrideWindow?}` | 202 `{data:{refund},message}` when enabled; default provider 503 until S3-06 |
+| GET | `/admin/refunds` | Admin Bearer + optional status/orderId/cursor/limit | 200 `{data:{refunds,pagination}}` |
+| GET | `/admin/refunds/:refundId` | Admin Bearer; no query | 200 `{data:{refund}}` |
+| POST | `/admin/courses/:courseId/archive` | Admin Bearer; `{reason,expectedRevision}` | 200, `{data:{course},message}` |
+| PATCH | `/admin/courses/:courseId/access-policy` | Admin Bearer; `{accessStatus,reason,expectedRevision}` | 200, `{data:{course},message}` |
 | GET | `/admin/users` | Admin Bearer; optional q/role/status/cursor/limit | 200, `{data:{users,pagination:{nextCursor,hasMore}}}` |
 | GET | `/admin/users/:userId` | Admin Bearer; no query | 200, `{data:{user}}` |
 | PATCH | `/admin/users/:userId/status` | Admin Bearer; `{status,reason,expectedRevision}` | 200, `{data:{user},message}` |
@@ -269,10 +274,88 @@ Create a course with `title`, `categoryId`, `description`, and integer `priceMin
 
 Use `GET /instructor/courses` for the dashboard and `GET /instructor/courses/:courseId` for the owner's course details. The list defaults to drafts and accepts a status filter; detail reads work in every state. PATCH is partial, requires at least one editable field, and works only in draft. A title change does not change the slug. `category` can be `null` if its original database record was deleted; retain `categoryId` and prompt the instructor to choose an active category. Prices are returned in the smallest EGP unit and should be formatted for display without floating-point persistence.
 
+## S3-05 — Durable refund request/read contracts
+
+The current local specification is OpenAPI **1.3.0**. Default application Stripe monetary
+issuance is disabled: POST returns `503 REFUND_PROCESSING_NOT_ENABLED` until S3-06 atomic
+finalization/recovery is integrated. This is a code capability boundary, not a missing env
+value. Do not publish a working "refund completed" flow based on S3-05 alone.
+
+When enabled, send `POST /admin/orders/:orderId/refunds` as an active verified admin with
+one fresh random `Idempotency-Key` (16–128 ASCII letters/digits/._-) per intentional request:
+
+```json
+{"reason":"Customer refund following a documented administrative review","overrideWindow":false}
+```
+
+No amount/currency/provider IDs/actor/status fields. Reasons are plain text 10–500 chars,
+without control/format characters. Keep the same key/body/order when retrying a network
+failure; the scope is actor + refund creation. Same intent returns the original 202 receipt,
+even after state changes. Changed intent returns `409 IDEMPOTENCY_CONFLICT`. Do not generate
+a new key to retry uncertainty. HTTP 202 is durable acceptance, not money returned or access
+revoked. Display "Request accepted" and poll current state rather than trusting the receipt's
+fixed `status=requested`. Creation and GET DTOs intentionally differ.
+
+GET `/admin/refunds/:refundId` returns id/orderId/amountMinor/EGP/status/createdAt/updatedAt/
+completedAt/failureCode. pending may include provider evidence awaiting S3-06 finalization;
+requires_reconciliation needs operational review. No completion/access change is performed
+by S3-05. Provider failures do not automatically release a hold or authorize another request.
+Reasons, actor, payment/provider IDs, keys, leases and raw errors are not exposed in these DTOs.
+
+GET `/admin/refunds` uses optional status/orderId/limit (1–100/default20) and signed cursor,
+createdAt/id descending. Keep filters fixed; reset pagination on INVALID_CURSOR. There is
+no total count and no refund retry/cancel/complete endpoint. All outcomes are no-store.
+Refund reads share one user-wide read quota; writes have a separate user-wide quota.
+Honor `429 Retry-After`, and treat 503 quota/config/shutdown errors before acceptance as
+unavailability rather than as a completed/refused money transfer.
+
+Domain conflicts include REFUND_NOT_ALLOWED, REFUND_IN_PROGRESS, REFUND_ALREADY_COMPLETED,
+REFUND_WINDOW_EXPIRED, REFUND_OVERRIDE_NOT_ALLOWED and FINANCIAL_RECONCILIATION_REQUIRED.
+Legacy orders missing policy/trusted confirmation cannot be fixed by the frontend, and
+paidAt must not be used to fabricate the refund deadline. Standard window is policy-bound;
+an allowed explicit override affects time only. See [S3-05 details](sprint_3_refund_requests.md).
+
+## S3-04 — Archive and legal/security access
+
+Local OpenAPI is **1.2.0**. Get a course's `revision` from `GET /admin/courses/:courseId`
+or the admin course list. This revision covers archive/access decisions, not all curriculum
+edits. Admin and owner course list filters now accept `status=archived`. Owner DTOs include
+safe `accessStatus/revision/archivedAt`; only admin detail/policy responses include reasons
+and actor metadata. There is no new role, delete-course, or unarchive action.
+
+Archive: `POST /admin/courses/:courseId/archive` with `{reason,expectedRevision}`. Only
+published/unavailable courses can be archived. Access policy: `PATCH
+/admin/courses/:courseId/access-policy` with `{accessStatus:"blocked"|"available",reason,
+expectedRevision}`. Both require active verified admin Bearer sessions, strict bodies,
+no query keys and plain-text 10–500 character reasons. Do not submit actor/status/dates.
+Success is `{data:{course},message}` with current policy revision and admin-only metadata.
+Current-revision same-state requests return explicit no-op; stale revision is
+`409 STATE_CONFLICT` even if desired state matches. Reload and ask the operator to decide;
+do not automatically overwrite a newer decision. Both actions share a per-user write quota,
+return no-store, and support no Idempotency-Key semantics.
+
+An archived course disappears from catalog, public details and preview. New checkout/free
+admission is denied. Existing active paid/free enrollments keep library outline, video,
+PDF, completion and resume, unless media is unavailable or access is blocked. Display the
+library course's `status=archived` and archivedAt as a retired-course banner while keeping
+the learning UI available. New fields on library entries: `availabilityCode` is AVAILABLE,
+COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE or ENROLLMENT_REVOKED. Use `available` as the
+learning enablement flag; blocked/unavailable course metadata and progress are null.
+No raw legal/security reason is shown to learners.
+
+Explicit block denies new video/PDF/progress even for enrolled users and reviewer media
+credentials. Admin/owner management metadata stays readable. Unblock does not unarchive,
+publish a draft, reset unavailableAt or repair provider media. Already-issued credentials
+may last until expiry (video <=15 minutes/PDF <=60 seconds), so do not promise immediate
+invalidation. Checkout admitted before the policy change can still settle correctly;
+the redirect alone never overrides the subsequent access policy.
+
+See [S3-04 decisions and tests](sprint_3_course_access.md). Staging B02 acceptance remains pending.
+
 ## S3-03 — Admin users and account status
 
 Use an active verified admin Bearer session. The three `/admin/users` endpoints are
-documented in OpenAPI 1.1.0 and always use `Cache-Control: no-store`.
+introduced in OpenAPI 1.1.0 (current local contract: 1.2.0) and always use `Cache-Control: no-store`.
 
 The list accepts `q` (literal case-insensitive name/email prefix, 1–100 chars),
 `role=student|instructor|admin`, `status=active|suspended`, `limit=1..100` (default 20),

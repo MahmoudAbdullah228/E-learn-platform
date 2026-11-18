@@ -98,6 +98,7 @@ no-op/revision conflicts, simultaneous cross-suspensions, rollback on session/au
 reactivation/legacy defaults, preserved purchases/earnings, seed safety and quota failures.
 Integration tests use only isolated `_test` replica-set fixtures; no external provider write.
 
-Staging B01 and qualified review are not recorded as PASS by these local tests. No GitHub
-commit/push, user suspension on the application database, or provider-account change was
-performed for this Story. Next Story: **S3-04 course archive/access policy**.
+Staging B01 and qualified review are not recorded as PASS by these local tests. No user
+suspension on the application database or provider-account change was performed. S3-03
+was subsequently committed/pushed as `e6f9f5b` by explicit user request. S3-04 is now
+implemented locally with [separate evidence](sprint_3_course_access.md); next is S3-05.

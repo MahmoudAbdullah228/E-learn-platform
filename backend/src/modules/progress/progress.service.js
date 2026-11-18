@@ -11,6 +11,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { toEnrollment } from '../enrollments/enrollment.presenter.js';
 import { toLessonProgress } from './progress.presenter.js';
 import { readProgressSummaries } from './progress.read.service.js';
+import { learningCourseFilter, courseAvailabilityCode } from '../courses/courseAccess.policy.js';
 
 const missingEnrollment = () => new ApiError(404, 'ENROLLMENT_NOT_FOUND', 'Enrollment was not found');
 const missingLesson = () => new ApiError(404, 'LEARNING_CONTENT_NOT_FOUND', 'Learning content was not found');
@@ -32,9 +33,12 @@ export function createProgressService({ clock = () => new Date() } = {}) {
         courseId, status: 'active' }, { $inc: { progressRevision: 1 } },
       { session, returnDocument: 'after', timestamps: false });
       if (!enrollment) throw missingEnrollment();
-      const course = await Course.findOneAndUpdate({ _id: courseId, status: 'published' },
+      const course = await Course.findOneAndUpdate(learningCourseFilter({ _id: courseId }),
         { $inc: { learningRevision: 1 } }, { session, timestamps: false }).select('_id');
-      if (!course) throw new ApiError(409, 'COURSE_UNAVAILABLE', 'The enrolled course is currently unavailable');
+      if (!course) {
+        const unavailable = await Course.findById(courseId).select('status accessStatus unavailableAt').session(session).lean();
+        throw new ApiError(409, courseAvailabilityCode(unavailable), 'The enrolled course is currently unavailable');
+      }
       const lesson = await Lesson.findById(lessonId).select('_id sectionId').session(session).lean();
       const section = lesson && await Section.exists({ _id: lesson.sectionId, courseId }).session(session);
       if (!section) throw missingLesson();

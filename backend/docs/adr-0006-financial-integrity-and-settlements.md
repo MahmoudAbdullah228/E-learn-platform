@@ -101,7 +101,11 @@ provider truth; it cannot regress an already confirmed success based on an old f
 If a provider reports contradictory later financial truth, hold/alert/reconcile explicitly
 rather than silently removing the accounting effect.
 
-The current adapter has no refund methods. Planned provider capabilities:
+S3-05 adds guarded createRefund/retrieveRefund to the Stripe provider facade through
+`stripeRefund.adapter.js`; the application factory keeps monetary issuance disabled until
+S3-06. A bounded provider-history preflight prevents creating over unresolved external
+refunds. Request reservation/hold/audit and a single post-commit attempt are locally tested;
+none of the final financial/access protocol is claimed complete. Planned recovery capabilities:
 createRefund(storedRequest), retrieveRefund(providerId), scanRefunds(paymentIdentity,cursor,
 limit), and validate/normalize refund evidence. Validate live mode, amount, currency and
 payment/order association. Unknown network outcome is not definitive failure. Older unknown
