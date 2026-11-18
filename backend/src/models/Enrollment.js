@@ -11,6 +11,8 @@ const schema = new mongoose.Schema({
   completedAt: { type: Date, default: null },
   progressRevision: { type: Number, default: 0, select: false },
   revokedAt: { type: Date, default: null },
+  revocationReason: { type: String, enum: ['refund', 'admin', 'legal', 'security', null], default: null },
+  revocationSourceOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null },
 }, { timestamps: true });
 protectSnapshot(schema, ['studentId', 'courseId']);
 schema.index({ studentId: 1, courseId: 1 }, { unique: true });

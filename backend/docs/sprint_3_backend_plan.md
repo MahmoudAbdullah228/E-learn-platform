@@ -3,6 +3,8 @@
 > الحالة: خطة مقترحة للتنفيذ، وليست تقرير إنجاز أو عقد API منشورًا.
 > المالك: BE1. التنفيذ تدريجيًا، Story واحدة ثم اختبارات ومراجعة وتسليم عقدها.
 > التاريخ: 2026-10-05. النطاق: إغلاق رحلة الـMVP التجريبية، وليس إطلاقًا تجاريًا.
+> مراجعة المزامنة وتقسيم التنفيذ: 2026-11-18؛ راجع [قائمة التنفيذ خطوة بخطوة](sprint_3_execution_checklist.md). لا تغيّر المراجعة السياسات التجارية إلى قرارات معتمدة.
+> تحديث S3-01 في نفس التاريخ: المستخدم فوّض اختيار السياسات الأنسب؛ الاختيارات المعتمدة للتنفيذ وحدودها في [Policy register](sprint_3_policy_register.md)، والـbaseline والفجوات في [Readiness evidence](sprint_3_readiness.md). أُنجز أساس S3-02 الداخلي محليًا؛ [دليل التنفيذ](sprint_3_financial_foundation.md). بقية workflows لم تُنفّذ بعد.
 > توجيه المستخدم: هذا آخر Sprint للـMVP؛ أي نقص أساسي من Sprint 1 أو 2 يدخل الإغلاق هنا، ولا يُؤجَّل إلى Sprint 4.
 > لا يتضمن إعداد هذه الخطة تنفيذ كود، أو تغيير بيانات، أو إجراء على GitHub.
 
@@ -47,8 +49,8 @@
 
 | البند | الحالة عند إعداد الخطة |
 | --- | --- |
-| Refund / Payout models وواجهاتهما | مخططان في الرسم؛ لا تنفيذ حالي |
-| تحويل الأرباح من pending إلى eligible | لا worker أو سياسة معتمدة بعد |
+| Refund / Payout models وواجهاتهما | models/indexes والأساس الداخلي منفّذة محليًا في S3-02؛ الواجهات والمعالجة المالية لم تنفّذ بعد |
+| تحويل الأرباح من pending إلى eligible | السياسات مختارة للتنفيذ، وموديل النسخ موجود؛ لا activation أو eligibility worker بعد |
 | لوحات المحاضر المالية وdashboard الإداري | مطلوبة في هذا الـSprint |
 | تعليق المستخدمين وتفعيله عبر admin API | `User.status` موجود؛ workflow الإداري غير منفّذ |
 | الأرشفة مع الاحتفاظ بوصول المشترين | `archived` غير موجود في enum الحالي، وقراءات التعلم تشترط published |
@@ -59,12 +61,12 @@
 
 ### 2.3 بوابة الدخول
 
-- [ ] تشغيل `npm run verify` على baseline الفعلي وتسجيل النتيجة، لا الاعتماد على عدد الاختبارات القديم.
+- [x] تشغيل `npm run verify` على baseline الفعلي وتسجيل النتيجة: S3-01 = 432 PASS؛ S3-02 = 462 PASS، مع lint/OpenAPI. لا يعادل قبول Staging.
 - [ ] MongoDB replica set منفصل لـStaging، و`MONGO_TEST_URI` معزول عن التطبيق، ونسخة احتياطية قابلة للاستعادة.
 - [ ] إثبات Checkout حقيقي Test Mode مع signed webhook → order/payment/enrollment/earning واحد لكل بيع.
 - [ ] إثبات الصورة وPDF والفيديو المحميين، التجديد وانتهاء صلاحية الاعتماد، ورفض غير الملتحق.
 - [ ] تنفيذ/جدولة كل A01–A19 مع Owner وتاريخ؛ لا اختزالها في payment happy path.
-- [ ] اعتماد سياسات S3-01 قبل تنفيذ انتقالات الأموال أو النسخ المنشورة.
+- [x] اعتماد اختيارات S3-01 للتصميم والتنفيذ التجريبي بتفويض المستخدم؛ activation وStaging/release approval منفصلة.
 
 ## 3. هدف Sprint 3 والنطاق
 
@@ -74,30 +76,30 @@
 
 هذه ليست خطة ماليات فقط: تشمل إغلاق كل STU01–STU12 وINS01–INS10 وADM01–ADM10، قواعد BR01–BR10، المتطلبات غير الوظيفية، القبول المتكامل وحزمة التسليم في الـMVP والـProject Plan. الوظيفة الموجودة تُثبت باختبار، والوظيفة الناقصة تُستكمل في نفس Sprint. تفاصيل التغطية في §17؛ لا يكون أي متطلب أساسي بلا Story ودليل وصاحب مسؤولية.
 
-التسليم النهائي للباك إند وحده لا يساوي تسليم المنتج. `frontend` في هذا checkout يحتوي `.gitignore` فقط عند الفحص؛ لا توجد هنا أدلة تنفيذ شاشات React الخاصة بالفريق. إغلاق الواجهة والتكامل جزء من بوابة التسليم، يتابعه FE1/FE2/FE3 وUX1 في مشروعهم الفعلي، ولا يفترض هذا الملف أن واجهاتهم موجودة أو مكتملة. تعديل الخطة لا يعني بدء بناء الفرونت أو تطبيق الميزات الآن.
+التسليم النهائي للباك إند وحده لا يساوي تسليم المنتج. بعد مزامنة `origin/main` في 2026-11-18 أصبح `frontend` يحتوي إعداد React/TypeScript/Vite وrouter مع صفحة Home أولية من PR #6؛ لم يعد المجلد فارغًا، لكن هذا لا يثبت تنفيذ الرحلات أو تكاملها. إغلاق الواجهة والتكامل جزء من بوابة التسليم، يتابعه FE1/FE2/FE3 وUX1 في مشروعهم الفعلي، ولا يفترض هذا الملف أن واجهاتهم مكتملة. تعديل الخطة لا يعني بدء بناء الفرونت أو تطبيق الميزات الآن.
 
 خارج النطاق: Stripe Connect، التحويلات البنكية الآلية، live money، سلة متعددة الكورسات، عملات إضافية، محاسبة ضريبية وفواتير آلية وتقارير متقدمة، شهادات أو اختبارات أو chat أو notifications منتجية جديدة. بيانات التجربة لا تُستخدم كأموال حقيقية. أي partial refunds كميزة واجهة تحتاج قرار نطاق؛ لا نتجاهل حدوثها خارجيًا عند reconciliation.
 
-## 4. S3-01: سجل القرارات المطلوبة قبل التنفيذ
+## 4. S3-01: سجل القرارات وحالة اعتمادها
 
-كل صف يُوثَّق بصاحب القرار، التاريخ، القيم النهائية، والعقد/الاختبار المتأثر. توصية هندسية ليست موافقة من المستخدم.
+كل صف يُوثَّق بصاحب القرار، التاريخ، القيم النهائية، والعقد/الاختبار المتأثر. توصية هندسية ليست موافقة من المستخدم؛ في 2026-11-18 فوّض المستخدم الاختيار، فسُجلت القرارات في Policy register. P01–P18 معتمدة للتصميم والتنفيذ التجريبي، وO01–O07 تشغيل/سعة مفتوحة بأصحابها وبواباتها. السجل التفصيلي هو المرجع عند تعارض صياغة قديمة في الخطة.
 
-| القرار | التوصية المبدئية | ما لا يجوز افتراضه |
+| القرار | الاختيار الحالي / ما ينتظر الدليل | ما لا يجوز افتراضه |
 | --- | --- | --- |
-| Refund policy | استرداد كامل يبدأه admin في Test Mode، بنافذة زمنية واضحة؛ 14 يومًا مقترح للنقاش فقط | لا نافذة 14 يومًا أو منع refund بسبب نسبة تقدم دون موافقة |
-| تجاوز السياسة | إن أُجيز، صلاحية صريحة وسبب audited، لا flag عام من العميل | لا bypass تلقائي لقيود المنتج |
+| Refund policy | استرداد كامل يبدأه admin في Test Mode خلال 14 يومًا من تأكيد المزود الموثوق؛ P01–P03 | لا ادعاء أن هذه سياسة قانونية للإطلاق التجاري أو ربطها بنسبة تقدم غير معتمدة |
+| تجاوز السياسة | استثناء للنافذة فقط بطلب admin صريح وسبب audited؛ P04 | لا bypass للمبلغ أو duplicate/unknown refund أو provider truth |
 | أهلية الأرباح | بعد انقضاء نافذة الاسترداد، دون refund/hold مفتوح | لا payout فوري بمجرد نجاح الدفع |
 | إصدار السياسة | policyVersion وeffectiveFrom، وربط كل بيع بسياسة refund/eligibility ثابتة وقت الشراء | لا إعادة حساب تاريخ أهلية مبيعات قديمة من env متغير دون قرار migration صريح |
 | التأخر في الاسترداد | بعد paid payout: دين سالب يُخصم من القادم وفق الـMVP | لا محو دين أو تغيير كشف تسوية تاريخي |
 | Refund أثناء تحويل يدوي | تجميد كشف التحويل، قيد مشروط وreconciliation قبل التسوية التالية | لا افتراض أن pending يعني الأموال لم تُحوَّل |
 | محاضر suspended | وقف تسويات جديدة لحين قرار إداري، دون إسقاط الالتزام المالي | لا منع تسجيل حقيقة تحويل تم بالفعل |
 | إعادة الشراء | بعد full refund مؤكد فقط؛ تفعيل نفس Enrollment بشراء جديد إذا سبب revocation هو refund | لا تجاوز admin/legal revocation أو إحياء بيع قديم |
-| تقدم عند إعادة الشراء | اقتراح الاحتفاظ بتاريخ التقدم وإعادة حسابه على المحتوى الحالي | سياسة الاحتفاظ/التصفير يجب اعتمادها وتوثيقها |
-| تعديل منشور | نسخة حيّة + candidate مستقل للمراجعة؛ allowlist ضيق لتصحيح النص | لا نشر مادة جديدة فورًا أو إغلاق الكورس الحي أثناء المراجعة |
+| تقدم عند إعادة الشراء | الاحتفاظ بتاريخ التقدم وإعادة حسابه على المحتوى الحالي؛ P12/P13 | لا تجاوز revocation مستقل أو إعادة روابط وسائط قديمة |
+| تعديل منشور | live + candidate مستقل؛ تصحيح مباشر admin-only للعنوان/الوصف المختصر مع reason؛ P15/P16 | لا نشر مادة جديدة فورًا أو إغلاق الكورس الحي أثناء المراجعة |
 | محتوى جديد بعد الإكمال | نسبة ديناميكية وفق الـMVP، وتحديث دلالة completedAt عند الحاجة | لا نسبة 100% دائمة بعد إضافة درس |
 | التسوية الشهرية | حدود شهر تقويمي Africa/Cairo مخزنة UTC، تشمل مستحقات قديمة غير مسوّاة وكل الدين السابق | لا شهر = 30 يومًا، ولا اختيار أرباح موجبة فقط |
 | حدود النسخ والتسويات | حد transaction وعدد العناصر يُعتمد بعد قياس بيانات وتجربة أكبر حالة | لا truncate صامت للكورس أو كشف التسوية |
-| Readiness الفريق | تثبيت repo/build للفرونت وURLs Staging وowners وبيانات demo ومقاييس الأداء المقبولة | لا اعتبار frontend الفارغ محليًا دليل واجهة جاهزة، ولا اعتماد غياب بيئة كـPASS |
+| Readiness الفريق | O01/O02: تثبيت build للفرونت وURLs Staging وowners وبيانات demo ومقاييس الأداء المقبولة | scaffold الفرونت ليس رحلة مكتملة، ولا اعتماد غياب بيئة كـPASS |
 | نافذة الاحتفاظ بالوسائط | تتجاوز مدة الاعتماد الصادر وتسمح بrollback آمن | لا حذف فوري لملف تستخدمه النسخة الحية أو candidate آخر |
 | الجدول | زيادة السعة المؤكدة أو تمديد Sprint الإغلاق النهائي مع تحديث موعد التسليم | لا Sprint 4 لإخفاء متطلبات أساسية متبقية، ولا حذف نطاق MVP للحفاظ على موعد شكلي |
 
@@ -138,7 +140,7 @@ Definition of Ready: لا تُعدّ Story مالية/تعديل منشور Read
 
 السجلات المالية وaudit لا تُحذف بـTTL. provider identifiers hidden افتراضيًا؛ تُعرض المراجع الضرورية فقط للأدمن عبر presenter صريح. لا تخزين بيانات بطاقات أو keys.
 
-policyVersion وشروطها تثبت عند إنشاء Checkout. refundDeadlineAt وeligibleAt يحسبان مرة واحدة عند fulfillment من paidAt الموثوق للمزود، لا من وقت إنشاء Checkout ولا من وقت وصول webhook المتأخر. لا موعد نهائي مصطنع لطلب لم يُدفع، ولا تقصير حق الاسترداد لأن الدفع تم بعد إنشاء الجلسة بمدة. retry يحافظ على النتائج نفسها، وتغيير السياسة لاحقًا لا يبدلها.
+policyVersion وشروطها تثبت عند إنشاء Checkout. refundDeadlineAt وeligibleAt يحسبان مرة واحدة عند fulfillment من paymentConfirmedAt الموثوق للمزود، لا من وقت إنشاء Checkout ولا من وقت وصول webhook المتأخر. paidAt الحالي يُكتب من processing clock؛ لا يُفسر كتأكيد موثوق أو يُعاد كتابة التاريخ القديم بالتخمين. تعالج G03 في سجل readiness هذا التكامل. لا موعد نهائي مصطنع لطلب لم يُدفع؛ retry يحافظ على النتائج نفسها، وتغيير السياسة لاحقًا لا يبدلها.
 
 ### 6.2 الكيانات الأساسية من الرسم
 
@@ -187,6 +189,7 @@ event-before-response يُربط بـRefund المحجوز من server-generated
 | --- | --- |
 | PayoutItem | تاريخ immutable لكل earning حُجز في payout: payoutId/earningEntryId/amountMinor/type/currency. Unique(payoutId,earningEntryId)، index earningEntryId. إلغاء payout لا يمحو كشفه؛ لا arrays مالية غير محدودة داخل Payout |
 | InstructorFinanceState | سجل واحد unique(instructorId)، revision وhold reasons وحالة التحويل. كل refund/eligibility/reservation/cancel/paid يكتب نفس السجل داخل transaction لتسلسل القرار عبر processes |
+| FinancialHold | سجل مستقل لكل مصدر hold مع unique(instructorId,sourceType,sourceId) وفهرس الحالة؛ لا قوائم متنامية داخل سجل المحاضر |
 | AdminAuditEvent | actorId/action/targetType/targetId/allowed before-after/reason/requestId/time. Index(targetType,targetId,createdAt) و(actorId,createdAt). Append-only؛ لا raw bodies أو أسرار |
 | AdminSecurityState | singleton unique key، revision لحماية آخر admin نشط تحت التزامن. كل تعليق/تغيير صلاحية admin يشارك نفس guard |
 | FinancialPolicyVersion | إصدار immutable مع effectiveFrom/refund window/eligibility rule/approvedBy/approvedAt؛ unique(version). Order يثبت policy/deadline المعمول بهما عند الشراء، وlegacy backfill له mapping معتمد لا تخمين |
@@ -200,7 +203,7 @@ event-before-response يُربط بـRefund المحجوز من server-generated
 ### 6.6 Migration إلزامية
 
 - Dry-run يكتشف duplicate identifiers وunsafe amounts وorphan references والمستحقات القديمة بلا eligibleAt؛ لا حذف أو تخمين الماليات.
-- Backfill eligibleAt من paidAt + policyVersion المعتمد لتلك المبيعات، لا createdAt أو تاريخ تشغيل script أو آخر env value. المبيعات السابقة بلا نسخة سياسة تحتاج mapping مؤرخًا يوافق عليه المنتج؛ غير المحسوم يبقى hold ولا يصبح eligible تلقائيًا.
+- Backfill eligibleAt من paymentConfirmedAt + policyVersion المعتمد لتلك المبيعات، لا paidAt المحلي القديم أو createdAt أو تاريخ تشغيل script أو آخر env value. المبيعات السابقة بلا نسخة سياسة/تأكيد موثوق تحتاج mapping ومصالحة مؤرخة؛ غير المحسوم يبقى hold ولا يصبح eligible تلقائيًا.
 - Earning snapshots القديمة تُطابق Order قبل eligibility؛ الاختلاف hold + تقرير، لا تعديل المبلغ لتغطية الخطأ.
 - إنشاء الفهارس بعد فحص البيانات، دون syncIndexes إسقاطًا تلقائيًا لفهارس قديمة. نسخة احتياطية وتقرير counts ومراجعة؛ run مرتين لا يغير النتيجة.
 - تشغيل replicas/transactions حقيقي في الاختبارات. توثيق تأثير نشر schema ثم workers ثم endpoints، وإمكانية العودة لإصدار لا يعرف archived/revisions؛ rollback ثنائي للكود وحده قد لا يكون آمنًا.
@@ -238,7 +241,7 @@ External partial refund أو dispute خارج contract المختار: حفظ ا
 
 ### 7.3 أهلية الأرباح والتسوية
 
-- eligibleAt مشتق من paidAt والسياسة المثبتة للبيع؛ worker لا يقرأ إعدادًا جديدًا ليقدّم أهلية بيع قديم أو يغيّر نافذة استرداده. إصدار سياسة جديد يطبق على مشتريات جديدة؛ أي معالجة retroactive تحتاج قرارًا وأثرًا موثقين. worker يحوّل eligible فقط عند غياب refund/hold وأن أصل البيع لم يُعكس.
+- eligibleAt مشتق من paymentConfirmedAt والسياسة المثبتة للبيع؛ worker لا يقرأ إعدادًا جديدًا ليقدّم أهلية بيع قديم أو يغيّر نافذة استرداده. إصدار سياسة جديد يطبق على مشتريات جديدة؛ أي معالجة retroactive تحتاج قرارًا وأثرًا موثقين. worker يحوّل eligible فقط عند غياب refund/hold وأن أصل البيع لم يُعكس.
 - كشف الشهر يشمل كل المستحق غير المسوّى حتى cutoff، بما فيه carry-forward والقيود السالبة الأقدم. لا filter periodStart يُخفي الدين أو القديم.
 - احتساب net قبل الحجز. net≤0 → لا تحويل؛ الدين يبقى ظاهرًا للقادم، لا يسقط لأن المبلغ النهائي صفر.
 - حجز ذري للعناصر eligible وغير المحجوزة مع Payout/PayoutItems ومجموع exact. نفس المبلغ أو IDs من body ليست مصدر الحقيقة؛ لا يسمح باختيار الموجب فقط.
@@ -281,13 +284,13 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 ### 8.4 تعديل منشور معزول
 
-- تصحيح نص محدود عبر allowlist مع audit وoptimistic revision check. الوصف يُراجع للتأكد أنه تصحيح لا تغيير موضوعي؛ لا escape hatch يبدّل promises للمشتري بلا مراجعة.
+- تصحيح مباشر admin-only للعنوان/الوصف المختصر عبر allowlist مع reason/audit وoptimistic revision check؛ الوصف التفصيلي وأي تغيير مادي يمران بالـcandidate. لا escape hatch يسمح للمحاضر بتغيير promises للمشتري بلا مراجعة؛ انظر P16 وADR 0007.
 - price/category/cover/curriculum/video/PDF وأي تغيير مادي في candidate فقط. price الجديد يؤثر في Checkout الجديد بعد approval، لا orders القائمة.
 - تصميم مقترح: CourseRevision + normalized candidate sections/lessons، مع live Course/Section/Lesson الحالية. عند approval تُطبَّق تغييرات محدودة ذريًا وتُحفظ هوية الدروس والتاريخ؛ أثناء review تبقى الحية published.
 - readiness يعاد التحقق منه لحظة approval: category نشطة، media authenticated/signed وready، الملكية، curriculum كامل، وbase revision لم يتغير. stale base → conflict، لا last-write-wins.
 - logicalLessonId ثابت للدرس المستمر؛ الجديد له ID جديد. حذف درس من النسخة الجديدة لا يمحو progress/orderhistory؛ archived lesson metadata تحفظ للمراجعة، ولا يدخل denominator الحالي.
 - Mux webhook/upload attempts تحمل revision context؛ ready لـcandidate لا يكتب asset/status للدرس الحي. حذف/فشل asset حي يفعل availability policy؛ draft asset لا يسقط الكورس الحي.
-- تنسيق transactions يجب أن يبقى bounded. اقتراح حد 200 درس إجمالي يُدرس في ADR ولا يُفرض كحقيقة حالية؛ الكورسات القديمة الكبيرة تبقى قابلة للقراءة، والتعديل الكبير يحتاج مسارًا مصممًا بدل truncation أو نشر جزئي.
+- تنسيق transactions يجب أن يبقى bounded على diff الصفوف المتغيرة، لا افتراض حد 200 درس إجمالي؛ الحد الحالي 200 طفل مباشر لكل parent. قياس budget قبل S3-13 مطلوب، والتعديل الكبير يحتاج مسارًا مصممًا بدل truncation أو نشر جزئي؛ انظر ADR 0007.
 - لا حذف media referenced بالحياة/candidate/rollback قبل انتهاء retention واعتمادات الوسائط. حصر orphan cleanup على refs الفعلية، والـlease/fencing يمنع عامل قديم من حذف asset أُعيد ربطه.
 
 هذا تصميم قابل للمراجعة لا rewrite شامل. إذا القياس لا يسمح بنشر transaction محدود، تُعتمد immutable version pointer بدل ذلك قبل التنفيذ، مع migration للقراءات واختبارات توافق؛ لا يخلط الفريق التصميمين عشوائيًا.
@@ -305,7 +308,7 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 ### S3-02 — Financial foundation والفهارس والتدقيق (4–6 ساعات)
 
-- Models/indexes: Refund/Payout/PayoutItem/InstructorFinanceState/AdminAuditEvent/FinancialPolicyVersion؛ تعديلات Order/EarningEntry/Enrollment المحدودة. Zod primitives للأموال وIDs والـidempotency.
+- Models/indexes: Refund/Payout/PayoutItem/InstructorFinanceState/FinancialHold/AdminAuditEvent/FinancialPolicyVersion؛ تعديلات Order/Payment/EarningEntry/Enrollment المحدودة. Zod primitives للأموال وIDs والـidempotency. العقد الداخلي محدد في ملف S3-01 contracts.
 - Services/utils: ledger transition policies وexact money totals وaudit؛ لا public controller جديد يلزم لهذه البنية.
 - قبول: snapshots immutable، references قابلة للتحقق، partial indexes صحيحة، لا تضاعف sale/refund/active claims.
 - اختبارات: duplicate-key races، invalid signs/currencies، safe total overflow، immutable fields، transaction rollback، dry-run على سجل قديم.
@@ -383,7 +386,7 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 ### S3-13 — Candidate revisions وتعديل المنشور (6–8 ساعات)
 
 - Models: CourseRevision/RevisionSection/RevisionLesson؛ indexes active candidate وpositions/logical IDs. Zod: metadata/curriculum patches وrevision preconditions.
-- Controllers/routes: create/read/edit candidate وعمليات curriculum/media لها، simple corrections allowlist؛ owner/instructor middleware.
+- Controllers/routes: create/read/edit candidate وعمليات curriculum/media لها بـowner/instructor middleware؛ direct corrections endpoint منفصل admin-only وفق P16.
 - Services: candidate مستقل، snapshot bounded، copy/reference policy، no live mutation، fresh ownership. تصميم ADR يسبق الكود.
 - قبول: live course لا يتغير أثناء تعديل candidate؛ IDs مستقرة، draft media لا يضرب live asset، نشر مباشر price/content مرفوض.
 - اختبارات: parallel candidate creates، stale patch، instructor غير مالك، suspended writer، material field في corrections، oversized legacy curriculum محفوظ دون truncate.
@@ -472,7 +475,7 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 | POST `/instructor/courses/:courseId/revisions/:revisionId/submit` | owner، readiness ثم pending_review |
 | GET `/admin/course-revisions` و`/admin/course-revisions/:revisionId` | admin، compare live/candidate من DTO safe |
 | POST `/admin/course-revisions/:revisionId/approve` أو`/reject` | admin، reason للرفض وbase version check |
-| PATCH `/instructor/courses/:courseId/corrections` | owner، allowlist تصحيح فقط وaudit |
+| PATCH `/admin/courses/:courseId/corrections` | admin، allowlist title/shortDescription فقط وreason/expectedRevision/audit؛ المحاضر يستخدم candidate |
 | GET/POST `/instructor/courses/:courseId/revisions/:revisionId/sections` | owner، قائمة candidate/إنشاء section logicalId مستقل |
 | PATCH/DELETE `/instructor/courses/:courseId/revisions/:revisionId/sections/:sectionId` | owner، تعديل/حذف ضمن candidate فقط؛ sectionId لا يؤخذ كمسار live |
 | PUT `/instructor/courses/:courseId/revisions/:revisionId/sections/order` | owner، orderedIds permutation كاملة مع expectedRevision |
@@ -492,7 +495,7 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 تحديث العقود الموجودة: student orders تعرض refund state المسموح دون provider secrets؛ library تعرض archive/access/refund reasons؛ admin order detail يعرض payment transaction reference المطلوب بـADM07؛ protected access/progress يتوافقان مع جدول §8.2. لا إضافة routes جديدة تعيد auth أو checkout أو library القائمة.
 
-S3-18 يضيف avatarUrl وcounts/duration إلى response schemas الحالية. عقود candidate المقترحة أعلاه كاملة على مستوى العمليات اللازمة، وrequest/response field constraints والأمثلة وpagination/error codes تُثبت قبل بدء S3-13 لا بعده. كل المسارات تتحقق من courseId/revisionId/sectionId/lessonId المتلازمة؛ model ID صالح لا يعني أنه تابع لهذا الـcandidate.
+avatarUrl وcounts/duration أُضيفت بالفعل في إغلاق Sprint 1/2؛ S3-18 يراجع المتبقي والأدلة ولا يعيد تنفيذها. عقود candidate المقترحة أعلاه كاملة على مستوى العمليات اللازمة، وrequest/response field constraints والأمثلة وpagination/error codes تُثبت قبل بدء S3-13 لا بعده. كل المسارات تتحقق من courseId/revisionId/sectionId/lessonId المتلازمة؛ model ID صالح لا يعني أنه تابع لهذا الـcandidate.
 
 DTO مالي: المبلغ integer مع currency، ID/status/UTC dates وsafe reason/hold code. `Idempotency-Key` محدود الطول والنمط؛ الرد المرجع الأول يُعاد للمستخدم المصرح نفسه. `expectedRevision` للـoptimistic concurrency؛ كل replay يُوثَّق status code/body الخاص به. 503 لعدم توفر تشغيل الطلب قبل قبوله، وليس لتأكيد فشل مالي مجهول بعد إرساله.
 
@@ -774,4 +777,4 @@ MVP §14 technical decisions مستمرة: React عند الفريق، REST Expr
 
 الخطة تغطي النطاق المطلوب؛ لا تعني أن التنفيذ اكتمل أو أن 100% من كل العيوب المحتملة يمكن ضمان غيابها. رفض الجدول غير الواقعي أو توثيق policy blocker لا يُنقص نطاق التسليم: يُحل داخل خطة الإغلاق النهائي قبل sign-off.
 
-أول خطوة تنفيذ بعد قبول الخطة: **S3-01 فقط**؛ اعتماد السياسات وbaseline والعقود وسجل النواقص، ثم S3-18 للنواقص المحددة وS3-02 وفق ترتيب التبعيات. لا توليد Sprint كامل دفعة واحدة.
+تحديث التنفيذ: أُنجز إعداد S3-01 وأساس S3-02 الداخلي محليًا في 2026-11-18؛ baseline والسياسات والفجوات في [Readiness evidence](sprint_3_readiness.md)، ودليل S3-02 في [Financial foundation](sprint_3_financial_foundation.md). التالي S3-03، مع متابعة المتبقي من S3-18 والأدلة. Staging وreviewer/capacity gates ما زالت منفصلة، ولا توليد Sprint كامل دفعة واحدة.

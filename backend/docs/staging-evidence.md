@@ -1,5 +1,24 @@
 # Sprint 2 delivery evidence
 
+## S3-02 internal financial foundation — 2026-11-18
+
+On branch `feature/sprint-3-mvp-closure`, based on `64f742a7b319f4d1f3be8f5ff9837ee6c9ab4687`
+plus the uncommitted local S3-01/S3-02 patch, `npm run verify` passed lint, OpenAPI validation
+and **462 tests, 0 failed, 0 skipped, 0 cancelled** (326.50 seconds).
+The final targeted financial regression also passed **30/30** (6.38 seconds).
+Both use the isolated `_test` replica set; providers are mocked. No new financial provider
+effect, policy activation or Staging acceptance was executed. See
+[S3-02 scope/evidence](sprint_3_financial_foundation.md). All A01–A19 remain NOT RUN.
+
+## Sprint 3 entry baseline — 2026-11-18
+
+On source `64f742a7b319f4d1f3be8f5ff9837ee6c9ab4687`, `npm run verify` passed lint,
+OpenAPI validation and **432 tests, 0 failed, 0 skipped, 0 cancelled** (295.55 seconds).
+The local database was verified as the isolated `e_learning_platform_test` writable
+replica set before execution. Providers were mocked; no payment/refund/provider mutation
+or Staging acceptance was executed. See [S3-01 readiness](sprint_3_readiness.md).
+All A01–A19 Staging results below remain NOT RUN; this new local baseline does not replace them.
+
 ## Release identity
 
 - Source revision + uncommitted patch identity: NOT RECORDED

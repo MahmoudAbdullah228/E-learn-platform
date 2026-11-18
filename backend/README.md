@@ -2,6 +2,12 @@
 
 Stories 1.1 through 2.4 provide the production-oriented foundation, authentication, basic profiles, instructor application review, draft courses, ordered curricula, and Mux direct-video uploads. Sprint 2 through S2-11 adds media, categories, review/publication, catalog, Stripe Test checkout/fulfillment, free enrollment, the student library, student/admin order reads, signed Mux playback, private PDF downloads, lesson completion and resume position with dynamic progress. S2-12 real Stripe/Mux/Cloudinary staging acceptance is still required before release.
 
+Sprint 3 S3-02 adds an internal financial foundation: versioned policy models, refund and
+payout records/indexes, audit, exact money helpers, transactional instructor guards and a
+read-only legacy diagnostic. See [S3-02 implementation and verification](docs/sprint_3_financial_foundation.md).
+This Story adds no HTTP endpoints, active policy, eligibility worker or provider calls;
+existing OpenAPI/frontend contracts remain unchanged.
+
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)

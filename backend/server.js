@@ -18,6 +18,13 @@ import { Enrollment } from './src/models/Enrollment.js';
 import { LessonProgress } from './src/models/LessonProgress.js';
 import { EarningEntry } from './src/models/EarningEntry.js';
 import { WebhookEvent } from './src/models/WebhookEvent.js';
+import { FinancialPolicyVersion } from './src/models/FinancialPolicyVersion.js';
+import { Refund } from './src/models/Refund.js';
+import { Payout } from './src/models/Payout.js';
+import { PayoutItem } from './src/models/PayoutItem.js';
+import { InstructorFinanceState } from './src/models/InstructorFinanceState.js';
+import { FinancialHold } from './src/models/FinancialHold.js';
+import { AdminAuditEvent } from './src/models/AdminAuditEvent.js';
 import { logger, serializeError } from './src/config/logger.js';
 import { closeHttpServer } from './src/services/shutdown.service.js';
 import { startHttpServer } from './src/services/startup.service.js';
@@ -37,6 +44,8 @@ async function startServer() {
         VideoCleanupJob.init(), VideoAssetState.init(), VideoPlaybackLease.init(),
         MediaAsset.init(), MediaCleanupJob.init(),
         Order.init(), Payment.init(), Enrollment.init(), LessonProgress.init(), EarningEntry.init(), WebhookEvent.init(),
+        FinancialPolicyVersion.init(), Refund.init(), Payout.init(), PayoutItem.init(),
+        InstructorFinanceState.init(), FinancialHold.init(), AdminAuditEvent.init(),
       ]);
     },
     signal: startupController.signal,
