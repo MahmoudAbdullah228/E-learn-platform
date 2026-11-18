@@ -73,4 +73,6 @@ schema.index({ transferMethod: 1, transferReference: 1 }, { unique: true,
   partialFilterExpression: { transferMethod: { $type: 'string' }, transferReference: { $type: 'string' } } });
 schema.index({ instructorId: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: 1 });
+schema.index({ createdAt: -1, _id: -1 });
+schema.index({ status: 1, createdAt: -1, _id: -1 });
 export const Payout = mongoose.model('Payout', schema);

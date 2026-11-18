@@ -267,7 +267,7 @@ test('concurrent admins sharing a revision produce one policy decision and one a
 
 test('audit failure rolls back course policy and actor/session fences with a generic error', async t => {
   const f = await fixture();
-  const failure = t.mock.method(AdminAuditEvent, 'create', async () => { throw new Error('private legal provider details'); });
+  const failure = t.mock.method(AdminAuditEvent, 'insertMany', async () => { throw new Error('private legal provider details'); });
   try {
     const result = await archive(f).expect(500);
     assert.equal(result.body.error.code, 'INTERNAL_SERVER_ERROR');

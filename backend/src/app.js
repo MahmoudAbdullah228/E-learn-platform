@@ -80,6 +80,8 @@ import { createCourseAdministrationRouter } from './modules/courseAdministration
 import { createCourseAdministrationService } from './modules/courseAdministration/courseAdministration.service.js';
 import { createRefundService } from './modules/refunds/refund.service.js';
 import { createRefundRouters } from './modules/refunds/refund.routes.js';
+import { createPayoutRouter } from './modules/payouts/payout.routes.js';
+import { createPayoutService } from './modules/payouts/payout.service.js';
 
 export function createApp({
   emailSender,
@@ -147,7 +149,8 @@ export function createApp({
   application.set('trust proxy', env.TRUST_PROXY_HOPS);
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders',
     '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users',
-    '/api/v1/admin/courses', '/api/v1/admin/refunds'], noStore);
+    '/api/v1/admin/courses', '/api/v1/admin/refunds', '/api/v1/admin/payouts',
+    '/api/v1/admin/instructors/:instructorId/settlement-preview'], noStore);
   application.use(
     pinoHttp({
       logger,
@@ -235,6 +238,7 @@ export function createApp({
   }));
   application.use('/api/v1/instructor', createInstructorVideoRouter({ videoService }));
 
+  application.use('/api/v1/admin', createPayoutRouter({ service: createPayoutService(), rateLimitStoreFactory }));
   application.use(notFoundHandler);
   application.use(errorHandler);
 

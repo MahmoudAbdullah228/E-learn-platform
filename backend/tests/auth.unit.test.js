@@ -220,5 +220,7 @@ test('limited routes request isolated shared-store instances by limiter namespac
       'course-review',
       'admin-course-policy',
       'admin-course-review',
+      'admin-payouts-read',
+      'admin-payouts-write',
     ]);
 });

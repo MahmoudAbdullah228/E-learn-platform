@@ -331,7 +331,7 @@ test('provider issuance responses alone never finalize money, release a hold or 
 
 test('audit failure rolls reservation/hold back before any SDK call or changed financial record', async t => {
   const f = await fixture();
-  const failure = t.mock.method(AdminAuditEvent, 'create', async () => { throw new Error('audit write failure'); });
+  const failure = t.mock.method(AdminAuditEvent, 'insertMany', async () => { throw new Error('audit write failure'); });
   try { await post(f).expect(500); } finally { failure.mock.restore(); }
   assert.equal(await Refund.countDocuments(), 0); assert.equal(await FinancialHold.countDocuments(), 0);
   assert.equal(calls.length, 0); assert.equal((await Order.findById(f.order.id)).status, 'paid');

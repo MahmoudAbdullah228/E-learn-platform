@@ -1,4 +1,12 @@
-# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-08
+# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
+
+S3-09 adds the admin settlement preview, payout draft creation and payout reads in
+OpenAPI **1.6.0**. Send the Cairo month (`YYYY-MM`) and a UTC cutoff to preview.
+Send the same fields with the instructor ID and an `Idempotency-Key` to reserve a
+draft. Use the returned payout ID to fetch current status, hold flag and signed
+items. Treat 200 replay as the original receipt. Handle 409 conflicts by refreshing
+the preview and reviewing the error details. Transfer actions are tracked in S3-10.
+See [payout draft operations](sprint_3_payout_drafts.md).
 
 Base URL: `<backend-origin>/api/v1`. Swagger: `<backend-origin>/api/v1/docs/`.
 For coordinated Sprint 2 acceptance, use [the staging runbook](staging-acceptance.md)
@@ -369,7 +377,7 @@ See [S3-07 implementation](sprint_3_repurchase.md).
 
 ## S3-08 — Internal eligibility only
 
-The OpenAPI contract stays **1.5.0**, with the S3-07 fields above. S3-08 adds no frontend
+S3-08 kept the OpenAPI contract at **1.5.0**, with the S3-07 fields above. It added no frontend
 endpoint. Ledger `pending`/`eligible` describes financial readiness, never money transferred.
 The server checks frozen sale policy/trusted confirmation, exact expiry and unresolved
 holds/refunds/inbox/dependent transfers; it preserves signed debt and old financial history.

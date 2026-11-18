@@ -256,7 +256,7 @@ test('competing status decisions allow one revision winner and preserve atomic a
 test('audit failure rolls back status, all session revocations, versions and the security guard', async t => {
   const actor = await admin();
   const target = await identity();
-  const failure = t.mock.method(AdminAuditEvent, 'create', async () => { throw new Error('sensitive provider failure'); });
+  const failure = t.mock.method(AdminAuditEvent, 'insertMany', async () => { throw new Error('sensitive provider failure'); });
   try {
     const result = await setStatus(actor, target).expect(500);
     assert.deepEqual(result.body, { error: { code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred', details: [] } });

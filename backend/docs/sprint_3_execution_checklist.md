@@ -77,7 +77,7 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 | S3-06 | مكتملة محليًا؛ 577 PASS + lint/OpenAPI، 154.41 ثانية | signed events/recovery وatomic ledger/access؛ [الدليل](sprint_3_refund_finalization.md)؛ التفعيل وStaging منفصلان |
 | S3-07 | مكتملة محليًا؛ 595 PASS + lint/OpenAPI، 191.18 ثانية | paid/free reentry مع retained progress وsource fences؛ [الدليل](sprint_3_repurchase.md)؛ B12 Staging منفصل |
 | S3-08 | مكتملة محليًا؛ 627 PASS + lint/OpenAPI، 398.91 ثانية | dated eligibility/shared guard وsigned carry-forward؛ [الدليل](sprint_3_earnings_eligibility.md)؛ قبول Staging منفصل |
-| S3-09 | لم تبدأ | reservation واحدة، مجموع exact يتضمن الدين |
+| S3-09 | نُفّذت محليًا | معاينة، حجز ذري وكشف موقّع واحتساب الدين. [دليل التشغيل](sprint_3_payout_drafts.md) |
 | S3-10 | لم تبدأ | sealed/paid/cancel/unknown والـrefund races مختبرة |
 | S3-11 | لم تبدأ | instructor يرى مبيعاته وأرباحه وتسوياته فقط |
 | S3-12 | لم تبدأ | admin metrics والمراجع المالية آمنة وصحيحة |
@@ -115,7 +115,7 @@ S3-04/S3-05 رُفعا في commit `bedffc9`. تحديث لاحق: نُفّذ S3
 S3-06 رُفعت في commit `e1314ff`. نُفّذت بعدها S3-07 محليًا لإعادة الشراء/التفعيل المجاني
 المثبت، مع الاحتفاظ بالتقدّم وإضافة ملخص الاسترداد الآمن للطلبات؛ [الدليل](sprint_3_repurchase.md).
 نُفّذت بعدها S3-08 محليًا للأهلية الموثقة والـholds والرصيد الموقّع؛ [الدليل](sprint_3_earnings_eligibility.md).
-تغييرات S3-07/S3-08 لم تُرفع؛ التالي **S3-09**. الاختبارات المحلية لا تستبدل قبول Staging أو مراجعة مالية مؤهلة.
+رُفعت S3-07/S3-08 في `b146dad`. S3-09 محلية، والتالية **S3-10**. قبول Staging المالي ما زال مفتوحًا.
 
 1. Models/indexes، أو بيان عدم الحاجة لموديل/فهرس جديد؛ Zod request validation.
 2. Services/policies/adapters ثم controllers/routes/middlewares؛ لا provider call داخل transaction callback قابل للإعادة.

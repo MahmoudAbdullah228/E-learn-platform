@@ -266,7 +266,7 @@ test('holds and audit roll back with the guarded mutation, including audit persi
   assert.equal(await FinancialHold.countDocuments(), 0);
   assert.equal(await AdminAuditEvent.countDocuments(), 0);
   assert.equal((await InstructorFinanceState.findOne({ instructorId })).revision, 0);
-  const failure = t.mock.method(AdminAuditEvent, 'create', async () => { throw new Error('Audit failure'); });
+  const failure = t.mock.method(AdminAuditEvent, 'insertMany', async () => { throw new Error('Audit failure'); });
   try { await assert.rejects(service.runForInstructor({ instructorId }, open), /Audit failure/); }
   finally { failure.mock.restore(); }
   assert.equal(await FinancialHold.countDocuments(), 0);

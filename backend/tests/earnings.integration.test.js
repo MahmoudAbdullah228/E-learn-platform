@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { after, before, beforeEach, test } from 'node:test';
 
 import mongoose from 'mongoose';
+import request from 'supertest';
 
+import { createApp } from '../src/app.js';
 import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { assertTransactionSupport } from '../src/config/transactions.js';
 import { AdminAuditEvent } from '../src/models/AdminAuditEvent.js';
@@ -27,6 +29,9 @@ import { createRefundReservationService } from '../src/modules/refunds/refundRes
 import { createRefundInboxService } from '../src/modules/refunds/refundInbox.service.js';
 import { createEarningsEligibilityWorker } from '../src/services/earningsEligibilityWorker.service.js';
 import { createPaymentWebhookWorker } from '../src/services/paymentWebhookWorker.service.js';
+import { createPayoutService } from '../src/modules/payouts/payout.service.js';
+import { payoutPeriodSchema } from '../src/modules/payouts/payout.schemas.js';
+import { signAccessToken } from '../src/utils/sessionToken.js';
 
 const models = [AdminAuditEvent, EarningEntry, Enrollment, FinancialHold, FinancialPolicyVersion, InstructorFinanceState,
   Order, Payment, Payout, PayoutItem, Refund, RefreshSession, User, WebhookEvent];
@@ -274,6 +279,143 @@ test('a historical positive cutoff cannot hide a newer already-known eligible de
   await debt(old, { occurredAt: now });
   const result = await createEligibilityBalanceService({ clock }).inspect({ instructorId: current.instructor.id, cutoffAt: new Date(now.getTime() - 3600_000) });
   assert.equal(result.netEligibleMinor, -800); assert.equal(result.eligibleAdjustmentMinor, -1600);
+});
+
+async function payoutActor(role = 'admin') {
+  const user = await User.create({ name: 'Payout operator', roles: [role], emailVerifiedAt: now,
+    email: `${randomUUID()}@example.test`, passwordHash: 'unused-test-hash' });
+  const familyId = randomUUID();
+  await RefreshSession.create({ userId: user.id, familyId, tokenHash: randomUUID(), tokenVersion: 0,
+    expiresAt: new Date(now.getTime() + 86400_000) });
+  const auth = { userId: user.id, familyId, tokenVersion: 0, roles: [role] };
+  return { auth, token: await signAccessToken(auth) };
+}
+
+function payoutInput(f) {
+  const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo', year: 'numeric',
+    month: '2-digit', day: '2-digit' }).format(now).slice(0, 7);
+  return { instructorId: f.instructor.id, month, cutoffAt: now.toISOString() };
+}
+
+test('payout HTTP contracts reserve exact signed items and replay the original receipt', async () => {
+  const old = await fixture(); const { adjustment } = await debt(old);
+  const f = await fixture({ instructor: old.instructor, amount: 2000 });
+  await worker().processNext();
+  const { token } = await payoutActor();
+  const student = await payoutActor('student');
+  const api = request(createApp());
+  const url = '/api/v1/admin/payouts';
+  const input = payoutInput(f);
+  const key = randomUUID();
+  const post = body => api.post(url).auth(token, { type: 'bearer' }).set('Idempotency-Key', key).send(body);
+  await api.get(url).expect(401);
+  await api.get(url).auth(student.token, { type: 'bearer' }).expect(403);
+  const preview = await api.get(`/api/v1/admin/instructors/${f.instructor.id}/settlement-preview`)
+    .auth(token, { type: 'bearer' }).query({ month: input.month, cutoffAt: input.cutoffAt }).expect(200);
+  assert.equal(preview.body.data.preview.netEligibleMinor, 800);
+  assert.equal(await Payout.countDocuments({ status: 'draft' }), 0);
+  await post({ ...input, amountMinor: 1600 }).expect(400);
+  const created = await post(input).expect(201);
+  const payout = created.body.data.payout;
+  assert.equal(created.headers['cache-control'], 'no-store');
+  assert.equal(payout.amountMinor, 800);
+  assert.equal(payout.lineCount, 2);
+  const replay = await post(input).expect(200);
+  assert.deepEqual(replay.body, created.body);
+  const clash = await post({ ...input, cutoffAt: new Date(now.getTime() - 1).toISOString() }).expect(409);
+  assert.equal(clash.body.error.code, 'IDEMPOTENCY_CONFLICT');
+  const detail = await api.get(`${url}/${payout.id}`).auth(token, { type: 'bearer' }).expect(200);
+  assert.deepEqual(detail.body.data.items.map(item => item.amountMinor).sort((a, b) => a - b), [-800, 1600]);
+  assert.equal(detail.body.data.payout.hasActiveHolds, false);
+  assert.equal(detail.body.data.payout.idempotencyKey, undefined);
+  const first = await api.get(url).auth(token, { type: 'bearer' }).query({ limit: 1 }).expect(200);
+  assert.equal(first.body.data.payouts.length, 1);
+  await api.get(url).auth(token, { type: 'bearer' }).query({ cursor: first.body.data.pagination.nextCursor, status: 'paid' }).expect(400);
+  const second = await api.get(url).auth(token, { type: 'bearer' })
+    .query({ cursor: first.body.data.pagination.nextCursor, limit: 1 }).expect(200);
+  assert.notEqual(first.body.data.payouts[0].id, second.body.data.payouts[0].id);
+  assert.equal(String((await EarningEntry.findById(adjustment.id)).payoutId), payout.id);
+  assert.equal(await AdminAuditEvent.countDocuments({ action: 'payout.created' }), 1);
+});
+
+test('concurrent payout creation across admins claims each earning only once', async () => {
+  const f = await fixture();
+  await worker().processNext();
+  const actors = [await payoutActor(), await payoutActor()];
+  const result = await Promise.allSettled(actors.map(({ auth }) => createPayoutService({ clock })
+    .create({ auth, input: payoutInput(f), idempotencyKey: randomUUID() })));
+  assert.equal(result.filter(row => row.status === 'fulfilled').length, 1);
+  assert.equal(result.find(row => row.status === 'rejected').reason.code, 'PAYOUT_ACTIVE');
+  assert.equal(await Payout.countDocuments({ status: 'draft' }), 1);
+  assert.equal(await PayoutItem.countDocuments(), 1);
+});
+
+test('confirmed refund cancels a reserved draft without losing its signed statement or original receipt', async () => {
+  const f = await fixture();
+  const other = await fixture({ instructor: f.instructor });
+  await worker().processNext();
+  await worker().processNext();
+  const { auth } = await payoutActor();
+  const service = createPayoutService({ clock });
+  const command = { auth, input: payoutInput(f), idempotencyKey: randomUUID() };
+  const created = await service.create(command);
+  const observation = { kind: 'refund', providerRefundId: 're_draft_cancel', paymentIntentId: `pi_${f.order.id}`,
+    amountMinor: 1000, currency: 'EGP', providerStatus: 'succeeded', providerCreatedAt: now,
+    correlation: null, metadataConflict: false, payment: { id: `pi_${f.order.id}`, amountMinor: 1000,
+      amountReceivedMinor: 1000, currency: 'EGP', orderId: f.order.id, status: 'succeeded', livemode: false } };
+  await createRefundInboxService({ clock }).recordObservation(observation);
+  const inbox = createPaymentWebhookWorker({ clock, provider: { async retrieveRefundObservation() { return observation; } } });
+  workers.push(inbox);
+  await inbox.processNext();
+  const current = await service.get(created.payout.id);
+  assert.equal(current.payout.status, 'cancelled');
+  assert.equal(current.items.length, 2);
+  assert.equal((await EarningEntry.findById(f.sale.id)).status, 'reversed');
+  assert.equal((await EarningEntry.findById(other.sale.id)).status, 'eligible');
+  assert.equal((await InstructorFinanceState.findOne({ instructorId: f.instructor.id })).activePayoutId, null);
+  assert.deepEqual(await service.create(command), { payout: created.payout, replayed: true });
+});
+
+test('holds, capacity and non-positive net each prevent any reservation', async () => {
+  const f = await fixture();
+  const other = await fixture({ instructor: f.instructor });
+  await worker().processNext();
+  await worker().processNext();
+  const { auth } = await payoutActor();
+  const input = payoutInput(f);
+  const create = options => createPayoutService({ clock, ...options }).create({ auth, input, idempotencyKey: randomUUID() });
+  await assert.rejects(create({ capacity: 1 }), { code: 'EARNINGS_CAPACITY_EXCEEDED' });
+  await debt(other);
+  await assert.rejects(create(), { code: 'PAYOUT_NON_POSITIVE_BALANCE' });
+  await hold(f);
+  await assert.rejects(create(), { code: 'PAYOUT_BLOCKED' });
+  assert.equal(await Payout.countDocuments({ status: 'draft' }), 0);
+  assert.equal((await EarningEntry.findById(f.sale.id)).status, 'eligible');
+});
+
+test('a final audit failure rolls back the draft, finance pointer and earning claims', async () => {
+  const f = await fixture();
+  await worker().processNext();
+  const { auth } = await payoutActor();
+  const key = randomUUID();
+  const targetId = new mongoose.Types.ObjectId();
+  await AdminAuditEvent.create({ actorType: 'user', actorId: auth.userId, action: 'payout.created',
+    targetType: 'payout', targetId, toStatus: 'draft', occurredAt: now, idempotencyKey: key,
+    requestFingerprint: 'a'.repeat(64), result: { resourceId: targetId, status: 'draft', httpStatus: 201 } });
+  await assert.rejects(createPayoutService({ clock }).create({ auth, input: payoutInput(f), idempotencyKey: key }), { code: 11000 });
+  assert.equal(await Payout.countDocuments(), 0);
+  assert.equal(await PayoutItem.countDocuments(), 0);
+  assert.equal((await EarningEntry.findById(f.sale.id)).status, 'eligible');
+  assert.equal((await InstructorFinanceState.findOne({ instructorId: f.instructor.id })).activePayoutId, null);
+});
+
+test('payout month follows Cairo calendar boundaries and handles year rollover', () => {
+  const period = payoutPeriodSchema.parse({ month: '2026-12', cutoffAt: '2026-12-31T22:00:00Z' });
+  assert.equal(period.periodStart.toISOString(), '2026-11-30T22:00:00.000Z');
+  assert.equal(period.periodEnd.toISOString(), '2026-12-31T22:00:00.000Z');
+  const summer = payoutPeriodSchema.parse({ month: '2026-07', cutoffAt: '2026-07-01T00:00:00Z' });
+  assert.equal(summer.periodStart.toISOString(), '2026-06-30T21:00:00.000Z');
+  assert.equal(payoutPeriodSchema.safeParse({ month: '2026-07', cutoffAt: '2026-06-30T20:59:59Z' }).success, false);
 });
 test('pending transfer-dependent debt remains pending and blocks release instead of being forgiven or promoted by time', async () => {
   const f = await fixture(); const { adjustment } = await debt(f, { pending: true, occurredAt: now });

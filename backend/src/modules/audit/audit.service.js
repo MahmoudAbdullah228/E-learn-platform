@@ -7,6 +7,7 @@ export async function appendAuditEvent({ session, input, occurredAt }) {
   if (!(occurredAt instanceof Date) || !Number.isFinite(occurredAt.getTime())) {
     throw new TypeError('A valid audit timestamp is required');
   }
-  const [saved] = await AdminAuditEvent.create([{ ...event, occurredAt }], { session });
+  // Validate and insert without tracking nested receipt documents for save rollback.
+  const [saved] = await AdminAuditEvent.insertMany([{ ...event, occurredAt }], { session });
   return saved;
 }

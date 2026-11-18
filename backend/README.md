@@ -35,8 +35,9 @@ Owner order reads include a safe latest-refund summary; library reads expose onl
 refund/restricted revocation categories. See [S3-07 behavior and verification](docs/sprint_3_repurchase.md).
 S3-08 adds a bounded internal eligibility worker, proof-based dated backfill, persistent
 review holds and a complete signed carry-forward preview. It changes ledger readiness
-only; payout/operator APIs remain S3-09/S3-10. See [S3-08 rules and verification](docs/sprint_3_earnings_eligibility.md).
-Local OpenAPI remains **1.5.0** (61 paths); S3-08 introduces no HTTP contract change.
+only. See [S3-08 rules and verification](docs/sprint_3_earnings_eligibility.md).
+S3-09 adds admin settlement preview, atomic payout draft reservation and payout reads
+in OpenAPI **1.6.0**. See [payout draft operations](docs/sprint_3_payout_drafts.md).
 
 ## Requirements
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.5.0
+  version: 1.6.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -34,7 +34,8 @@ info:
     retaining the enrollment/progress identity and recomputing progress against current lessons.
     Owner order reads include the latest safe refund summary; library reads distinguish refunded access.
     S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
-    Payout and earnings dashboard operations remain later stories; eligible never means transferred.
+    S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
+    Transfer confirmation and earnings dashboards remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -49,6 +50,8 @@ servers:
   - url: /api/v1
     description: API on the same host as this documentation
 tags:
+  - name: Payouts
+    description: Admin settlement previews and reserved payout drafts
   - name: Health
     description: Process health
   - name: Auth
@@ -90,6 +93,144 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /admin/instructors/{instructorId}/settlement-preview:
+    get:
+      operationId: previewInstructorSettlement
+      tags: [Payouts]
+      summary: Inspect the current signed balance for a Cairo settlement month
+      description: Preview is read-only. Include earlier unsettled sales through cutoff and all known eligible debt. Review blocked and reasonCodes before requesting a draft.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: instructorId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: month, in: query, required: true, schema: { $ref: '#/components/schemas/PayoutMonth' } }
+        - { name: cutoffAt, in: query, required: true, schema: { $ref: '#/components/schemas/PayoutCutoff' } }
+      responses:
+        '200':
+          description: Snapshot preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [preview]
+                    properties:
+                      preview: { $ref: '#/components/schemas/SettlementPreview' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts:
+    post:
+      operationId: createPayoutDraft
+      tags: [Payouts]
+      summary: Create a draft and atomically reserve the complete selected balance
+      description: Recomputes the signed balance under the instructor finance guard. Active payouts, holds, non-positive balances and capacity violations return 409. The actor-scoped key replays the original draft receipt with 200. Use GET for current state.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [instructorId, month, cutoffAt]
+              properties:
+                instructorId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+                month: { $ref: '#/components/schemas/PayoutMonth' }
+                cutoffAt: { $ref: '#/components/schemas/PayoutCutoff' }
+      responses:
+        '201': { $ref: '#/components/responses/PayoutDraftReceipt' }
+        '200': { $ref: '#/components/responses/PayoutDraftReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    get:
+      operationId: listPayouts
+      tags: [Payouts]
+      summary: List payouts and current instructor hold flags
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: instructorId, in: query, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, pending, paid, cancelled] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 } }
+      responses:
+        '200':
+          description: Payouts sorted newest first with a filter-bound opaque cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [payouts, pagination]
+                    properties:
+                      payouts: { type: array, items: { $ref: '#/components/schemas/PayoutRecord' } }
+                      pagination:
+                        type: object
+                        required: [hasMore, nextCursor]
+                        properties:
+                          hasMore: { type: boolean }
+                          nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}:
+    get:
+      operationId: getPayout
+      tags: [Payouts]
+      summary: Read a payout and its immutable signed line items
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: Payout detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [payout, items]
+                    properties:
+                      payout: { $ref: '#/components/schemas/PayoutRecord' }
+                      items:
+                        type: array
+                        maxItems: 1000
+                        items:
+                          type: object
+                          required: [earningEntryId, currency, amountMinor, type]
+                          properties:
+                            earningEntryId: { type: string }
+                            currency: { const: EGP }
+                            amountMinor: { type: integer }
+                            type: { enum: [sale, refund_adjustment] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
   /admin/orders/{orderId}/refunds:
     post:
       operationId: requestFullRefund
@@ -2365,6 +2506,21 @@ components:
       in: cookie
       name: refresh_token
   responses:
+    PayoutDraftReceipt:
+      description: Original draft reservation receipt with status draft and revision zero
+      headers:
+        Cache-Control: { schema: { const: no-store } }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [payout]
+                properties:
+                  payout: { $ref: '#/components/schemas/PayoutRecord' }
     ValidationError:
       description: Request data or verification token is invalid
       content:
@@ -2440,6 +2596,49 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    PayoutMonth:
+      type: string
+      pattern: '^[2-9][0-9]{3}-(0[1-9]|1[0-2])$'
+      not: { const: '9999-12' }
+      description: Calendar month in Africa/Cairo
+    PayoutCutoff:
+      type: string
+      format: date-time
+      pattern: 'Z$'
+      description: UTC cutoff within the Cairo month and no later than now. At month end, the exact end instant is excluded from sale selection.
+    PayoutRecord:
+      type: object
+      required: [id, instructorId, currency, amountMinor, lineCount, periodStart, periodEnd, cutoffAt, createdAt, status, revision]
+      properties:
+        id: { type: string }
+        instructorId: { type: string }
+        currency: { const: EGP }
+        amountMinor: { type: integer, minimum: 1 }
+        lineCount: { type: integer, minimum: 1, maximum: 1000 }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        status: { enum: [draft, pending, paid, cancelled] }
+        revision: { type: integer, minimum: 0 }
+        hasActiveHolds: { type: boolean, description: Present on current-state reads }
+    SettlementPreview:
+      type: object
+      required: [currency, asOf, cutoffAt, periodStart, periodEnd, entryCount, selectedEntryCount, eligibleSaleMinor, eligibleAdjustmentMinor, netEligibleMinor, deferredAdjustmentMinor, blocked, reasonCodes]
+      properties:
+        currency: { const: EGP }
+        asOf: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        entryCount: { type: integer, minimum: 0 }
+        selectedEntryCount: { type: integer, minimum: 0 }
+        eligibleSaleMinor: { type: integer }
+        eligibleAdjustmentMinor: { type: integer }
+        netEligibleMinor: { type: integer }
+        deferredAdjustmentMinor: { type: integer }
+        blocked: { type: boolean }
+        reasonCodes: { type: array, items: { type: string } }
     CreateRefundInput:
       type: object
       additionalProperties: false
