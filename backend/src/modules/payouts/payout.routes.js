@@ -7,7 +7,7 @@ import { createAuthenticatedRateLimiter } from '../../middlewares/rateLimiter.js
 import { validateBody, validateParams, validateQuery } from '../../middlewares/validate.js';
 import { createPayoutController } from './payout.controller.js';
 import { createPayoutSchema, emptyQuerySchema, instructorIdSchema,
-  payoutIdSchema, payoutListSchema, payoutPeriodSchema } from './payout.schemas.js';
+  payoutCommandSchemas, payoutIdSchema, payoutListSchema, payoutPeriodSchema } from './payout.schemas.js';
 
 export function createPayoutRouter({ service, rateLimitStoreFactory }) {
   const router = Router();
@@ -22,5 +22,9 @@ export function createPayoutRouter({ service, rateLimitStoreFactory }) {
   router.get('/payouts', ...admin, read, validateQuery(payoutListSchema), controller.list);
   router.get('/payouts/:payoutId', ...admin, read, validateParams(payoutIdSchema), validateQuery(emptyQuerySchema), controller.get);
   router.post('/payouts', ...admin, write, validateQuery(emptyQuerySchema), validateBody(createPayoutSchema), controller.create);
+  for (const [command, schema] of Object.entries(payoutCommandSchemas)) {
+    router.post(`/payouts/:payoutId/${command}`, ...admin, write, validateParams(payoutIdSchema),
+      validateQuery(emptyQuerySchema), validateBody(schema), controller.transition(command));
+  }
   return router;
 }

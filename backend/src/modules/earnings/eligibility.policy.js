@@ -7,7 +7,7 @@ const date = value => value instanceof Date && Number.isFinite(value.getTime());
 const review = code => ({ code, eligible: false, deadline: null });
 
 // This consumes persisted trusted facts, not current environment defaults or paidAt.
-export function evaluateSaleEligibility({ entry, order, payment, policy, now }) {
+export function evaluateSaleEligibility({ entry, order, payment, policy, now, reservedPayoutId }) {
   if (!date(now)) throw new TypeError('A valid eligibility clock is required');
   if (!order?.policyVersionId || !entry.policyVersionId || !date(order?.paymentConfirmedAt)
       || !date(payment?.paymentConfirmedAt)) return review('EARNINGS_LEGACY_REQUIRES_REVIEW');
@@ -16,10 +16,12 @@ export function evaluateSaleEligibility({ entry, order, payment, policy, now }) 
     lateAdminOverrideAllowed: policy.lateAdminOverrideAllowed, eligibilityRule: policy.eligibilityRule,
     approvalSource: policy.approvalSource, approvedBy: policy.approvedBy ? String(policy.approvedBy) : null,
     approvedAt: policy.approvedAt, approvalReference: policy.approvalReference });
+  const unreserved = ['pending', 'eligible'].includes(entry.status) && !entry.payoutId;
+  const reserved = entry.status === 'included_in_payout' && same(entry.payoutId, reservedPayoutId);
   if (!approved?.success || !same(order.policyVersionId, policy._id) || !same(entry.policyVersionId, policy._id)
       || !date(order.createdAt) || policy.effectiveFrom > order.createdAt
       || order.refundWindowSeconds !== policy.refundWindowSeconds
-      || entry.type !== 'sale' || !['pending', 'eligible'].includes(entry.status) || entry.payoutId || entry.refundId || entry.dependentOnPayoutId
+      || entry.type !== 'sale' || (!unreserved && !reserved) || entry.refundId || entry.dependentOnPayoutId
       || !same(entry.orderId, order._id) || !same(entry.instructorId, order.instructorId)
       || order.status !== 'paid' || order.purchaseSlotActive !== true || payment?.status !== 'succeeded'
       || payment.provider !== 'stripe' || !same(payment.orderId, order._id)

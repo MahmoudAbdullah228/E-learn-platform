@@ -16,6 +16,8 @@ const schema = new mongoose.Schema({
   toStatus: { type: String, enum: [...auditStatuses, null], default: null },
   reason: { type: String, default: null, trim: true, minlength: 10, maxlength: 500,
     validate: value => value == null || !containsUnsafeCharacter(value) },
+  evidenceReference: { type: String, default: null, select: false, minlength: 3, maxlength: 128,
+    match: /^[A-Z0-9][A-Z0-9._/-]+$/ },
   requestId: { type: String, default: null, maxlength: 100, match: /^[A-Za-z0-9_.:-]+$/ },
   idempotencyKey: { ...financialKeyField, default: null },
   requestFingerprint: { ...fingerprintField, default: null },

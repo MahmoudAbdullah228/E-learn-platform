@@ -4,7 +4,7 @@ import { FinancialHold } from '../../models/FinancialHold.js';
 import { InstructorFinanceState } from '../../models/InstructorFinanceState.js';
 import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
-import { appendAuditEvent } from '../audit/audit.service.js';
+import { appendAuditEvent, appendAuditEvents } from '../audit/audit.service.js';
 import { financialIdSchema, holdInputSchema, holdResolutionSchema } from './finance.schemas.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' },
@@ -106,6 +106,21 @@ export function createFinanceFoundationService({ clock = () => new Date() } = {}
       if (!resolved) throw conflict();
       await auditHold(context, 'financial_hold.resolved', resolved, data.resolvedBy);
       return resolved;
+    },
+
+    async resolveOpenHolds(context, { holdIds, resolutionCode, resolvedBy }) {
+      assertContext(context);
+      if (!holdIds.length) return;
+      const data = holdIds.map(holdId => holdResolutionSchema.parse({ holdId, resolutionCode, resolvedBy }));
+      const { session, now, instructorId } = context;
+      const changed = await FinancialHold.updateMany({ _id: { $in: data.map(item => item.holdId) },
+        instructorId, openedAt: { $lte: now }, resolvedAt: null, resolutionCode: null, resolvedBy: null },
+      { $set: { resolvedAt: now, resolutionCode: data[0].resolutionCode, resolvedBy: data[0].resolvedBy } },
+      { session, maxTimeMS: 5000 });
+      if (changed.modifiedCount !== data.length) throw conflict();
+      await appendAuditEvents({ session, occurredAt: now, inputs: data.map(item => ({ actorType: 'user', actorId: item.resolvedBy,
+        action: 'financial_hold.resolved', targetType: 'financial_hold', targetId: item.holdId,
+        fromStatus: 'open', toStatus: 'resolved' })) });
     },
   });
 }

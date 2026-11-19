@@ -44,5 +44,6 @@ schema.index({ refundId: 1 }, { unique: true,
 schema.index({ instructorId: 1, status: 1, createdAt: 1 });
 schema.index({ status: 1, eligibleAt: 1, _id: 1 });
 schema.index({ dependentOnPayoutId: 1, status: 1 });
+schema.index({ payoutId: 1 });
 schema.index({ status: 1, type: 1, eligibleAt: 1, _id: 1 });
 export const EarningEntry = mongoose.model('EarningEntry', schema);

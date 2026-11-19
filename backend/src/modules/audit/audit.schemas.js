@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { auditActions, auditStatuses, auditTargetTypes } from '../../utils/auditTypes.js';
 import { financialIdSchema, financialKeySchema, financialReasonSchema,
-  fingerprintSchema, revisionSchema } from '../finance/finance.schemas.js';
+  fingerprintSchema, revisionSchema, transferReferenceSchema } from '../finance/finance.schemas.js';
 
 const resultSchema = z.object({ resourceId: financialIdSchema,
   status: z.string().min(1).max(40).regex(/^[a-z_]+$/), revision: revisionSchema.optional(),
@@ -15,6 +15,7 @@ export const auditInputSchema = z.object({
   fromStatus: z.enum(auditStatuses).nullable().default(null),
   toStatus: z.enum(auditStatuses).nullable().default(null),
   reason: financialReasonSchema.nullable().default(null),
+  evidenceReference: transferReferenceSchema.optional(),
   requestId: z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/).nullable().default(null),
   idempotencyKey: financialKeySchema.nullable().default(null),
   requestFingerprint: fingerprintSchema.nullable().default(null),

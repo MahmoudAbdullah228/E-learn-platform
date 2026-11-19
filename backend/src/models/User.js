@@ -61,6 +61,7 @@ const userSchema = new mongoose.Schema(
     instructorReviewRevision: { type: Number, default: 0, select: false },
     checkoutRevision: { type: Number, default: 0, select: false },
     learningRevision: { type: Number, default: 0, select: false },
+    payoutAdmissionRevision: { type: Number, default: 0, select: false },
     adminActionRevision: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
       validate: Number.isSafeInteger, select: false },
     statusRevision: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,

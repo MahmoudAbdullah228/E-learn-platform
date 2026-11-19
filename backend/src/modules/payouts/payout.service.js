@@ -14,21 +14,19 @@ import { createEligibilityBalanceService } from '../earnings/eligibilityBalance.
 import { createFinanceFoundationService } from '../finance/finance.service.js';
 import { createPayoutSchema, payoutKeySchema, payoutPeriodSchema } from './payout.schemas.js';
 import { toPayout, toPayoutItem, toPayoutReceipt } from './payout.presenter.js';
+import { createPayoutLifecycleService, fencePayoutAdmission, selectionCutoff } from './payoutLifecycle.service.js';
+import { payoutConflict, payoutItemLimit } from './payoutLedger.service.js';
 
 const snapshot = work => mongoose.connection.transaction(work, {
   readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, maxCommitTimeMS: 10_000,
 });
 const cursor = createKeysetCursor({ namespace: 'admin-payouts:v1',
   normalizeFilters: ({ instructorId, status }) => ({ instructorId: instructorId ?? null, status: status ?? null }) });
-const conflict = () => new ApiError(409, 'PAYOUT_STATE_CONFLICT', 'The payout state requires review');
-const maxItems = 1000;
-const selectionCutoff = ({ cutoffAt, periodEnd }) => cutoffAt.getTime() === periodEnd.getTime()
-  ? new Date(periodEnd.getTime() - 1) : cutoffAt;
-
-export function createPayoutService({ clock = () => new Date(), capacity = maxItems } = {}) {
+export function createPayoutService({ clock = () => new Date(), capacity = payoutItemLimit } = {}) {
   const finance = createFinanceFoundationService({ clock });
   const balances = createEligibilityBalanceService({ clock, capacity });
   return Object.freeze({
+    transition: createPayoutLifecycleService({ finance, balances }),
     async preview({ instructorId, period }) {
       return snapshot(async session => {
         const now = clock();
@@ -55,6 +53,7 @@ export function createPayoutService({ clock = () => new Date(), capacity = maxIt
           return { payout: toPayoutReceipt(prior), replayed: true };
         }
         if (period.cutoffAt > now) throw new ApiError(400, 'INVALID_FINANCIAL_CUTOFF', 'Cutoff must not be in the future');
+        await fencePayoutAdmission({ instructorId, session });
         const { balance, entries } = await balances.read({ instructorId, cutoffAt: selectionCutoff(period) }, { session, now });
         if (balance.reasonCodes.includes('PAYOUT_ACTIVE')) {
           throw new ApiError(409, 'PAYOUT_ACTIVE', 'This instructor already has an active payout');
@@ -68,11 +67,11 @@ export function createPayoutService({ clock = () => new Date(), capacity = maxIt
           currency: balance.currency, amountMinor: balance.netEligibleMinor, lineCount: entries.length, createdAt: now }], { session });
         const state = await InstructorFinanceState.updateOne({ instructorId, activePayoutId: null },
           { $set: { activePayoutId: payout._id } }, { session });
-        if (state.modifiedCount !== 1) throw conflict();
+        if (state.modifiedCount !== 1) throw payoutConflict();
         const claims = await EarningEntry.updateMany({ _id: { $in: entries.map(entry => entry._id) }, instructorId,
           currency: payout.currency, status: 'eligible', payoutId: null },
         { $set: { status: 'included_in_payout', payoutId: payout._id } }, { session, maxTimeMS: 5000 });
-        if (claims.modifiedCount !== entries.length) throw conflict();
+        if (claims.modifiedCount !== entries.length) throw payoutConflict();
         await PayoutItem.insertMany(entries.map(entry => ({
           payoutId: payout._id, earningEntryId: entry._id, instructorId,
           amountMinor: entry.amountMinor, type: entry.type, currency: entry.currency,
@@ -107,9 +106,9 @@ export function createPayoutService({ clock = () => new Date(), capacity = maxIt
       return snapshot(async session => {
         const payout = await Payout.findById(payoutId).session(session).lean().maxTimeMS(5000);
         if (!payout) throw new ApiError(404, 'PAYOUT_NOT_FOUND', 'Payout was not found');
-        const items = await PayoutItem.find({ payoutId }).sort({ earningEntryId: 1 }).limit(maxItems + 1)
+        const items = await PayoutItem.find({ payoutId }).sort({ earningEntryId: 1 }).limit(payoutItemLimit + 1)
           .session(session).lean().maxTimeMS(5000);
-        if (items.length > maxItems || items.length !== payout.lineCount) throw conflict();
+        if (items.length > payoutItemLimit || items.length !== payout.lineCount) throw payoutConflict();
         const held = await FinancialHold.exists({ instructorId: payout.instructorId, resolvedAt: null })
           .session(session).maxTimeMS(5000);
         return { payout: toPayout(payout, Boolean(held)), items: items.map(toPayoutItem) };

@@ -417,6 +417,155 @@ test('payout month follows Cairo calendar boundaries and handles year rollover',
   assert.equal(summer.periodStart.toISOString(), '2026-06-30T21:00:00.000Z');
   assert.equal(payoutPeriodSchema.safeParse({ month: '2026-07', cutoffAt: '2026-06-30T20:59:59Z' }).success, false);
 });
+
+async function draftFor(f, actor, service) {
+  await worker().processNext();
+  return (await service.create({ auth: actor.auth, input: payoutInput(f), idempotencyKey: randomUUID() })).payout;
+}
+
+const execute = (service, actor, payout, command, input, idempotencyKey = randomUUID()) => service.transition({
+  auth: actor.auth, payoutId: payout.id, command, input: { expectedRevision: payout.revision, ...input }, idempotencyKey,
+});
+const attemptFor = payout => ({ transferAttemptId: payout.transferAttemptId, transferMethod: payout.transferMethod });
+
+async function refundFor(f) {
+  const observation = { kind: 'refund', providerRefundId: `re_payout_${f.order.id}`, paymentIntentId: `pi_${f.order.id}`,
+    amountMinor: f.order.amountMinor, currency: 'EGP', providerStatus: 'succeeded', providerCreatedAt: now,
+    correlation: null, metadataConflict: false, payment: { id: `pi_${f.order.id}`, amountMinor: f.order.amountMinor,
+      amountReceivedMinor: f.order.amountMinor, currency: 'EGP', orderId: f.order.id, status: 'succeeded', livemode: false } };
+  await createRefundInboxService({ clock }).recordObservation(observation);
+  const inbox = createPaymentWebhookWorker({ clock, provider: { async retrieveRefundObservation() { return observation; } } });
+  workers.push(inbox);
+  await inbox.processNext();
+}
+
+test('payout HTTP lifecycle seals once, validates payment evidence, and replays original receipts', async () => {
+  const f = await fixture();
+  const actor = await payoutActor();
+  const student = await payoutActor('student');
+  const service = createPayoutService({ clock });
+  const draft = await draftFor(f, actor, service);
+  const url = `/api/v1/admin/payouts/${draft.id}`;
+  const api = request(createApp());
+  const key = randomUUID();
+  const post = (action, body, token = actor.token, commandKey = key) => api.post(`${url}/${action}`)
+    .auth(token, { type: 'bearer' }).set('Idempotency-Key', commandKey).send(body);
+  const submit = { expectedRevision: 0, transferMethod: 'test_simulation' };
+  await post('submit', submit, student.token).expect(403).expect('Cache-Control', 'no-store');
+  await post('submit', { ...submit, amountMinor: 800 }).expect(400);
+  const sealed = await post('submit', submit).expect(200);
+  assert.deepEqual(sealed.body.data.payout, { id: draft.id, status: 'pending', revision: 1 });
+  const { payout } = (await api.get(url).auth(actor.token, { type: 'bearer' }).expect(200)).body.data;
+  assert.equal(payout.transferOutcome, 'unknown');
+  assert.equal(payout.hasActiveHolds, true);
+  assert.match(payout.transferAttemptId, /^[a-f\d-]{36}$/);
+  const paid = { expectedRevision: 1, ...attemptFor(payout), confirmedAmountMinor: 800, transferReference: ' sim-transfer-001 ' };
+  await post('mark-paid', { ...paid, confirmedAmountMinor: 801 }).expect(409);
+  await post('mark-paid', { ...paid, transferAttemptId: randomUUID() }).expect(409);
+  await post('cancel', { expectedRevision: 1, reason: 'Transfer result still unconfirmed' }).expect(409);
+  const confirmed = await post('mark-paid', paid).expect(200);
+  assert.deepEqual(confirmed.body.data.payout, { id: draft.id, status: 'paid', revision: 2 });
+  assert.deepEqual((await post('submit', submit).expect(200)).body, sealed.body);
+  assert.deepEqual((await post('mark-paid', { ...paid, transferReference: 'SIM-TRANSFER-001' }).expect(200)).body, confirmed.body);
+  assert.equal((await post('mark-paid', { ...paid, transferReference: 'SIM-TRANSFER-002' }).expect(409)).body.error.code, 'IDEMPOTENCY_CONFLICT');
+  await post('cancel', { expectedRevision: 2, reason: 'Paid history is final' }).expect(409);
+  const latest = (await service.get(draft.id)).payout;
+  assert.equal(latest.transferReference, 'SIM-TRANSFER-001');
+  assert.equal(latest.hasActiveHolds, false);
+  assert.equal(await AdminAuditEvent.countDocuments({ action: 'payout.paid', targetId: draft.id }), 1);
+  assert.equal((await EarningEntry.findById(f.sale.id)).status, 'included_in_payout');
+});
+
+test('payout confirmation races and reference reuse across methods remain atomic', async () => {
+  const actor = await payoutActor(); const second = await payoutActor();
+  const service = createPayoutService({ clock });
+  const prepare = async transferMethod => {
+    const draft = await draftFor(await fixture(), actor, service);
+    await execute(service, actor, draft, 'submit', { transferMethod });
+    return (await service.get(draft.id)).payout;
+  };
+  const payout = await prepare('bank_transfer');
+  const competing = await Promise.allSettled([actor, second].map((admin, index) => execute(createPayoutService({ clock }), admin,
+    payout, 'mark-paid', { ...attemptFor(payout), confirmedAmountMinor: payout.amountMinor, transferReference: `BANK-RACE-${index}` })));
+  const winner = competing.findIndex(result => result.status === 'fulfilled');
+  assert.notEqual(winner, -1);
+  assert.equal(competing[1 - winner].reason.code, 'PAYOUT_REVISION_CONFLICT');
+  const other = await prepare('manual_transfer');
+  await assert.rejects(execute(service, actor, other, 'mark-paid', { ...attemptFor(other),
+    confirmedAmountMinor: other.amountMinor, transferReference: `bank-race-${winner}` }), { code: 'PAYOUT_TRANSFER_REFERENCE_CONFLICT' });
+  assert.equal((await service.get(other.id)).payout.hasActiveHolds, true);
+  const owner = await Payout.findById(other.id);
+  assert.equal(String((await InstructorFinanceState.findOne({ instructorId: owner.instructorId })).activePayoutId), other.id);
+});
+
+for (const outcome of ['confirmed_paid', 'confirmed_not_sent']) {
+  test(`pending refund and ${outcome} resolve only matching liabilities and retain the statement`, async () => {
+    const f = await fixture();
+    const second = await fixture({ instructor: f.instructor });
+    const actor = await payoutActor();
+    const service = createPayoutService({ clock });
+    await worker().processNext();
+    const draft = await draftFor(f, actor, service);
+    await execute(service, actor, draft, 'submit', { transferMethod: 'test_simulation' });
+    await refundFor(f);
+    const { result: unrelatedHold } = await hold(f);
+    let { payout, items } = await service.get(draft.id);
+    const evidence = { ...attemptFor(payout), reason: 'Checked the operator settlement evidence' };
+    const unknown = await execute(service, actor, payout, 'reconcile', { ...evidence, outcome: 'unknown', evidenceReference: 'SIM-UNKNOWN' });
+    assert.equal(unknown.status, 'pending');
+    payout = (await createPayoutService({ clock }).get(draft.id)).payout;
+    assert.equal(payout.transferAttemptId, evidence.transferAttemptId);
+    await assert.rejects(service.create({ auth: actor.auth, input: payoutInput(f), idempotencyKey: randomUUID() }), { code: 'PAYOUT_ACTIVE' });
+    assert.equal(await EarningEntry.countDocuments({ dependentOnPayoutId: payout.id, status: 'pending' }), 1);
+    const paid = outcome === 'confirmed_paid';
+    const result = await execute(service, actor, payout, 'reconcile', { ...evidence, outcome, ...(paid
+      ? { confirmedAmountMinor: payout.amountMinor, transferReference: 'SIM-PAID' } : { evidenceReference: 'SIM-NOT-SENT' }) });
+    assert.equal(result.status, paid ? 'paid' : 'cancelled');
+    assert.deepEqual((await service.get(draft.id)).items, items);
+    const adjustment = await EarningEntry.findOne({ dependentOnPayoutId: payout.id });
+    assert.equal(adjustment.status, paid ? 'eligible' : 'reversed');
+    assert.equal(adjustment.eligibleAt?.getTime() ?? null, paid ? now.getTime() : null);
+    assert.equal((await stored(f.sale.id)).status, paid ? 'included_in_payout' : 'reversed');
+    assert.equal((await stored(second.sale.id)).status, paid ? 'included_in_payout' : 'eligible');
+    assert.equal((await FinancialHold.findById(unrelatedHold.id)).resolvedAt, null);
+    assert.equal(await FinancialHold.countDocuments({ instructorId: f.instructor.id, resolvedAt: null }), 1);
+    assert.equal((await InstructorFinanceState.findOne({ instructorId: f.instructor.id })).activePayoutId, null);
+  });
+}
+
+test('sealing fails closed on new inbox facts and on an instructor suspension, without discarding the draft', async () => {
+  const f = await fixture(); const actor = await payoutActor(); const service = createPayoutService({ clock });
+  const draft = await draftFor(f, actor, service);
+  const pending = await event(f);
+  await assert.rejects(execute(service, actor, draft, 'submit', { transferMethod: 'bank_transfer' }), { code: 'PAYOUT_BLOCKED' });
+  await WebhookEvent.updateOne({ _id: pending.id }, { $set: { status: 'processed' } });
+  await User.updateOne({ _id: f.instructor.id }, { $set: { status: 'suspended' } });
+  await assert.rejects(execute(service, actor, draft, 'submit', { transferMethod: 'bank_transfer' }), { code: 'PAYOUT_ADMISSION_BLOCKED' });
+  assert.equal((await service.get(draft.id)).payout.status, 'draft');
+  await execute(service, actor, draft, 'cancel', { reason: 'Operator discarded this unsealed draft' });
+  assert.equal((await stored(f.sale.id)).status, 'eligible');
+  await assert.rejects(service.create({ auth: actor.auth, input: payoutInput(f), idempotencyKey: randomUUID() }), { code: 'PAYOUT_ADMISSION_BLOCKED' });
+});
+
+test('a stale suspended admin cannot confirm a transfer, while another admin and the refund reducer serialize', async () => {
+  const f = await fixture();
+  const first = await payoutActor(); const second = await payoutActor();
+  const service = createPayoutService({ clock });
+  const draft = await draftFor(f, first, service);
+  await execute(service, first, draft, 'submit', { transferMethod: 'test_simulation' });
+  const { payout } = await service.get(draft.id);
+  const input = { ...attemptFor(payout), confirmedAmountMinor: payout.amountMinor, transferReference: 'SIM-REFUND-RACE' };
+  await User.updateOne({ _id: first.auth.userId }, { $set: { status: 'suspended' } });
+  await User.updateOne({ _id: f.instructor.id }, { $set: { status: 'suspended' } });
+  await assert.rejects(execute(service, first, payout, 'mark-paid', input), { code: 'AUTHENTICATION_REQUIRED' });
+  const [receipt] = await Promise.all([execute(service, second, payout, 'mark-paid', input), refundFor(f)]);
+  assert.equal(receipt.status, 'paid');
+  const entries = await EarningEntry.find({ orderId: f.order.id, type: 'refund_adjustment' });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].status, 'eligible');
+  assert.equal(entries[0].amountMinor, -payout.amountMinor);
+  assert.equal(await FinancialHold.countDocuments({ instructorId: f.instructor.id, resolvedAt: null }), 0);
+});
 test('pending transfer-dependent debt remains pending and blocks release instead of being forgiven or promoted by time', async () => {
   const f = await fixture(); const { adjustment } = await debt(f, { pending: true, occurredAt: now });
   const recent = await fixture({ instructor: f.instructor }); await worker().processNext();

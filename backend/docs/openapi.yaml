@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.6.0
+  version: 1.7.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -35,6 +35,7 @@ info:
     Owner order reads include the latest safe refund summary; library reads distinguish refunded access.
     S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
     S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
+    S3-10 seals payout drafts and records externally verified settlement outcomes.
     Transfer confirmation and earnings dashboards remain later stories.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
@@ -51,7 +52,7 @@ servers:
     description: API on the same host as this documentation
 tags:
   - name: Payouts
-    description: Admin settlement previews and reserved payout drafts
+    description: Admin settlement previews, drafts and manual transfer reconciliation
   - name: Health
     description: Process health
   - name: Auth
@@ -224,6 +225,102 @@ paths:
                             currency: { const: EGP }
                             amountMinor: { type: integer }
                             type: { enum: [sale, refund_adjustment] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/submit:
+    post:
+      operationId: submitPayout
+      tags: [Payouts]
+      summary: Seal a payout and allocate a transfer attempt
+      description: Revalidates the reserved statement and holds. Returns a pending receipt. Fetch current payout details for the attempt ID. The API does not send funds.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutSubmit' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/mark-paid:
+    post:
+      operationId: markPayoutPaid
+      tags: [Payouts]
+      summary: Record a confirmed external transfer
+      description: Matches the sealed attempt, transfer method and exact amount. Records the normalized, globally unique reference. Paid is final.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutPaidEvidence' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/cancel:
+    post:
+      operationId: cancelPayout
+      tags: [Payouts]
+      summary: Cancel a draft or confirm a sealed transfer was not sent
+      description: A draft requires a reason. A pending payout requires the matching attempt, method and a reference to authoritative evidence that no transfer occurred. Unknown transfers remain reserved.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutCancel' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/reconcile:
+    post:
+      operationId: reconcilePayout
+      tags: [Payouts]
+      summary: Record the result of investigating a sealed transfer
+      description: An unknown result keeps the payout pending. Confirmed results require evidence and finalize matching refund dependencies in the same transaction.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutReconcile' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/UnauthorizedError' }
         '403': { $ref: '#/components/responses/ForbiddenError' }
@@ -2453,6 +2550,17 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
 components:
   parameters:
+    PayoutId:
+      name: payoutId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+    PayoutCommandKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Scoped to the authenticated admin and action. Reuse only for identical retries.
+      schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
     AdminUserId:
       name: userId
       in: path
@@ -2506,6 +2614,25 @@ components:
       in: cookie
       name: refresh_token
   responses:
+    PayoutCommandReceipt:
+      description: Original accepted result, also returned on an identical retry. GET the payout for its current state.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [payout]
+                properties:
+                  payout:
+                    type: object
+                    required: [id, status, revision]
+                    properties:
+                      id: { type: string }
+                      status: { enum: [pending, paid, cancelled] }
+                      revision: { type: integer, minimum: 1 }
     PayoutDraftReceipt:
       description: Original draft reservation receipt with status draft and revision zero
       headers:
@@ -2596,6 +2723,73 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    PayoutTransferMethod:
+      type: string
+      enum: [bank_transfer, manual_transfer, test_simulation]
+      description: Simulation is available in Stripe Test Mode.
+    PayoutEvidenceReference:
+      type: string
+      minLength: 3
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._/-]+$'
+      description: Reference is trimmed and uppercased. SIM- references are reserved for test_simulation.
+    PayoutSubmit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, transferMethod]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+    PayoutPaidEvidence:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, transferMethod, transferAttemptId, confirmedAmountMinor, transferReference]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+        transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+        confirmedAmountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        transferReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+    PayoutCancel:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, reason]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, reason, evidenceReference]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            evidenceReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+    PayoutReconcile:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, confirmedAmountMinor, transferReference, reason, outcome]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            confirmedAmountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            transferReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            outcome: { enum: [confirmed_paid] }
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, reason, evidenceReference, outcome]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            evidenceReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+            outcome: { enum: [confirmed_not_sent, unknown] }
     PayoutMonth:
       type: string
       pattern: '^[2-9][0-9]{3}-(0[1-9]|1[0-2])$'
@@ -2622,6 +2816,14 @@ components:
         status: { enum: [draft, pending, paid, cancelled] }
         revision: { type: integer, minimum: 0 }
         hasActiveHolds: { type: boolean, description: Present on current-state reads }
+        sealedAt: { type: [string, 'null'], format: date-time }
+        sealedBy: { type: [string, 'null'], description: Admin assigned to the sealed transfer attempt }
+        transferAttemptId: { type: [string, 'null'], format: uuid }
+        transferMethod: { enum: [bank_transfer, manual_transfer, test_simulation, null] }
+        transferOutcome: { enum: [not_started, unknown, confirmed_paid, confirmed_not_sent] }
+        transferReference: { type: [string, 'null'] }
+        paidAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
     SettlementPreview:
       type: object
       required: [currency, asOf, cutoffAt, periodStart, periodEnd, entryCount, selectedEntryCount, eligibleSaleMinor, eligibleAdjustmentMinor, netEligibleMinor, deferredAdjustmentMinor, blocked, reasonCodes]

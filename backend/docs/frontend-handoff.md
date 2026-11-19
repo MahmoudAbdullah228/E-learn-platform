@@ -1,5 +1,13 @@
 # Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
 
+S3-10 adds admin `submit`, `mark-paid`, `cancel` and `reconcile` operations in OpenAPI **1.7.0**.
+Send `expectedRevision` from GET and a fresh `Idempotency-Key` for each new command.
+Retry the same key with the same payload after a lost response. Each command returns its
+original `{ id, status, revision }` receipt. Refetch GET for the current attempt, amount,
+transfer outcome and hold state. Use the attempt ID and method from GET when recording evidence.
+An `unknown` reconciliation leaves the payout pending. A confirmed cancellation requires
+evidence of non-transfer for a sealed payout. See [settlement operations](sprint_3_payout_lifecycle.md).
+
 S3-09 adds the admin settlement preview, payout draft creation and payout reads in
 OpenAPI **1.6.0**. Send the Cairo month (`YYYY-MM`) and a UTC cutoff to preview.
 Send the same fields with the instructor ID and an `Idempotency-Key` to reserve a

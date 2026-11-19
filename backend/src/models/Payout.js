@@ -6,6 +6,7 @@ import { protectFinancialHistory, protectWriteOnce } from './protectFinancialHis
 import { containsUnsafeCharacter } from '../utils/textValidation.js';
 
 export const payoutStatuses = ['draft', 'pending', 'paid', 'cancelled'];
+export const transferMethods = ['bank_transfer', 'manual_transfer', 'test_simulation'];
 const schema = new mongoose.Schema({
   instructorId: financialReference('User'),
   amountMinor: { ...safeIntegerField(1), required: true },
@@ -20,7 +21,7 @@ const schema = new mongoose.Schema({
   revision: { ...safeIntegerField(), default: 0 },
   sealedAt: { type: Date, default: null }, sealedBy: financialReference('User', false),
   transferAttemptId: { type: String, default: null, match: /^[a-f\d-]{36}$/ },
-  transferMethod: { type: String, enum: ['bank_transfer', 'manual_transfer', 'test_simulation', null], default: null },
+  transferMethod: { type: String, enum: [...transferMethods, null], default: null },
   transferReference: { type: String, default: null, trim: true, uppercase: true,
     minlength: 3, maxlength: 128, match: /^[A-Z0-9][A-Z0-9._/-]+$/ },
   transferOutcome: { type: String, enum: ['not_started', 'unknown', 'confirmed_paid', 'confirmed_not_sent'],
@@ -41,6 +42,8 @@ schema.pre('validate', function validatePayout() {
   requireModelCondition(this, this.status !== 'paid' || (this.paidAt && this.paidBy
     && this.transferReference && this.transferOutcome === 'confirmed_paid'),
   'paidAt', 'Paid payouts require confirmed transfer evidence');
+  requireModelCondition(this, this.status !== 'pending' || (this.transferOutcome === 'unknown' && !this.transferReference),
+    'transferOutcome', 'Pending payouts require an unresolved transfer');
   requireModelCondition(this, this.status !== 'cancelled' || (this.cancelledAt
     && (this.cancelledBy || (this.cancellationSource === 'refund' && this.cancelledByRefundId))
     && this.cancellationReason && this.transferOutcome === 'confirmed_not_sent'),
@@ -69,8 +72,8 @@ schema.index({ instructorId: 1, currency: 1 }, { unique: true,
 schema.index({ createdBy: 1, idempotencyKey: 1 }, { unique: true });
 schema.index({ transferAttemptId: 1 }, { unique: true,
   partialFilterExpression: { transferAttemptId: { $type: 'string' } } });
-schema.index({ transferMethod: 1, transferReference: 1 }, { unique: true,
-  partialFilterExpression: { transferMethod: { $type: 'string' }, transferReference: { $type: 'string' } } });
+schema.index({ transferReference: 1 }, { unique: true,
+  partialFilterExpression: { transferReference: { $type: 'string' } } });
 schema.index({ instructorId: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: 1 });
 schema.index({ createdAt: -1, _id: -1 });

@@ -17,5 +17,12 @@ export function createPayoutController(service) {
     async get(request, response) {
       response.json({ data: await service.get(request.validatedParams.payoutId) });
     },
+    transition(command) {
+      return async (request, response) => {
+        const payout = await service.transition({ auth: request.auth, payoutId: request.validatedParams.payoutId,
+          command, input: request.validatedBody, idempotencyKey: request.get('Idempotency-Key') });
+        response.json({ data: { payout } });
+      };
+    },
   };
 }

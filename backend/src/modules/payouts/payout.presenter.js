@@ -8,7 +8,11 @@ export function toPayoutReceipt(payout) {
 }
 
 export function toPayout(payout, hasActiveHolds) {
-  return { ...toPayoutReceipt(payout), revision: payout.revision, status: payout.status, hasActiveHolds };
+  return { ...toPayoutReceipt(payout), revision: payout.revision, status: payout.status, hasActiveHolds,
+    sealedAt: payout.sealedAt ?? null, sealedBy: payout.sealedBy ? String(payout.sealedBy) : null,
+    transferAttemptId: payout.transferAttemptId ?? null,
+    transferMethod: payout.transferMethod ?? null, transferOutcome: payout.transferOutcome,
+    transferReference: payout.transferReference ?? null, paidAt: payout.paidAt ?? null, cancelledAt: payout.cancelledAt ?? null };
 }
 
 export function toPayoutItem(item) {

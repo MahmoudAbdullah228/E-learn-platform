@@ -35,14 +35,17 @@ function total(amounts) {
 // a historical positive cutoff cannot hide a debt already known at the decision time.
 export function createEligibilityBalanceService({ clock = () => new Date(), capacity = 1000 } = {}) {
   capacity = z.number().int().min(1).max(1000).parse(capacity);
-  async function read(input, { session, now }) {
+  async function read(input, { session, now, reservedPayoutId }) {
     if (!session?.inTransaction()) throw new TypeError('Earnings balance requires a transaction');
     const { instructorId, currency, cutoffAt = now } = eligibilitySummarySchema.parse(input);
     if (!validDate(now) || cutoffAt > now) throw new ApiError(400, 'INVALID_FINANCIAL_CUTOFF', 'Cutoff must not be in the future');
     if (!await User.exists({ _id: instructorId }).session(session)) {
       throw new ApiError(404, 'FINANCIAL_ACCOUNT_NOT_FOUND', 'The financial account was not found');
     }
-    const entries = await EarningEntry.find({ instructorId, currency, status: 'eligible', payoutId: null })
+    const available = { status: 'eligible', payoutId: null };
+    const selection = reservedPayoutId
+      ? { $or: [available, { status: 'included_in_payout', payoutId: reservedPayoutId }] } : available;
+    const entries = await EarningEntry.find({ instructorId, currency, ...selection })
       .sort({ createdAt: 1, _id: 1 }).limit(capacity + 1).session(session).maxTimeMS(5000).lean();
     if (entries.length > capacity) throw capacityError();
     const deferred = await EarningEntry.find({ instructorId, currency, type: 'refund_adjustment', status: 'pending' })
@@ -71,7 +74,8 @@ export function createEligibilityBalanceService({ clock = () => new Date(), capa
     for (const entry of entries) {
       const order = orderById.get(String(entry.orderId)); const payment = paymentByOrder.get(String(entry.orderId));
       if (entry.type === 'sale') {
-        const decision = evaluateSaleEligibility({ entry, order, payment, policy: policyById.get(String(entry.policyVersionId)), now });
+        const decision = evaluateSaleEligibility({ entry, order, payment,
+          policy: policyById.get(String(entry.policyVersionId)), now, reservedPayoutId });
         if (!decision.eligible) reasons.add(decision.deadline ? 'EARNINGS_EVIDENCE_REQUIRES_REVIEW' : decision.code);
         if (!validDate(entry.eligibleAt)) reasons.add('EARNINGS_EVIDENCE_REQUIRES_REVIEW');
         if (!validDate(entry.eligibleAt) || entry.eligibleAt <= cutoffAt) {
@@ -110,7 +114,8 @@ export function createEligibilityBalanceService({ clock = () => new Date(), capa
     if (await Refund.exists({ paymentId: { $in: payments.filter(payment => saleOrderIds.has(String(payment.orderId))).map(payment => payment._id) },
       status: { $nin: ['failed', 'cancelled'] } }).session(session).maxTimeMS(5000)) reasons.add('REFUND_UNRESOLVED');
     if (deferred.length) reasons.add('DEPENDENT_TRANSFER_UNRESOLVED');
-    if (await Payout.exists({ instructorId, currency, status: { $in: ['draft', 'pending'] } }).session(session).maxTimeMS(5000)) reasons.add('PAYOUT_ACTIVE');
+    if (await Payout.exists({ instructorId, currency, status: { $in: ['draft', 'pending'] },
+      ...(reservedPayoutId && { _id: { $ne: reservedPayoutId } }) }).session(session).maxTimeMS(5000)) reasons.add('PAYOUT_ACTIVE');
     if (await hasUnresolvedFinancialEvent({ paymentIntentIds: payments.map(payment => payment.paymentIntentId).filter(Boolean), session })) reasons.add('FINANCIAL_EVENT_PENDING');
     // No periodStart filter, no positive-only selection and no first-N truncated total.
     return { entries: selected, balance: { currency, asOf: now, cutoffAt, entryCount: entries.length,

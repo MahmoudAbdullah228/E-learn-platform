@@ -2,12 +2,16 @@ import { AdminAuditEvent } from '../../models/AdminAuditEvent.js';
 import { auditInputSchema } from './audit.schemas.js';
 
 export async function appendAuditEvent({ session, input, occurredAt }) {
+  const [saved] = await appendAuditEvents({ session, inputs: [input], occurredAt });
+  return saved;
+}
+
+export async function appendAuditEvents({ session, inputs, occurredAt }) {
   if (!session?.inTransaction()) throw new TypeError('Audit requires the mutation transaction');
-  const event = auditInputSchema.parse(input);
   if (!(occurredAt instanceof Date) || !Number.isFinite(occurredAt.getTime())) {
     throw new TypeError('A valid audit timestamp is required');
   }
   // Validate and insert without tracking nested receipt documents for save rollback.
-  const [saved] = await AdminAuditEvent.insertMany([{ ...event, occurredAt }], { session });
-  return saved;
+  const events = inputs.map(input => ({ ...auditInputSchema.parse(input), occurredAt }));
+  return AdminAuditEvent.insertMany(events, { session });
 }
