@@ -1,5 +1,12 @@
 # Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
 
+S3-12 adds `GET /admin/dashboard` and `GET /admin/finance/summary` in OpenAPI **1.9.0**.
+Use the latter with `instructorId` for one account. The dashboard reports current user
+and course counts alongside financial activity in the selected UTC range. Admin order
+detail includes nullable Stripe references and `refunds` with `refundPagination`.
+Send `refundPagination.nextCursor` as `refundCursor` for the next page. See
+[admin report and order contracts](sprint_3_admin_finance.md).
+
 S3-11 adds instructor finance in OpenAPI **1.8.0**. Use the instructor token with
 `GET /instructor/finance/summary`, `/instructor/sales`, `/instructor/earnings`,
 `/instructor/payouts` and `/instructor/payouts/{payoutId}`. Summary activity follows the

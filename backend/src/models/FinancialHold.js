@@ -24,5 +24,6 @@ protectFinancialHistory(schema, { immutableFields: ['instructorId', 'sourceType'
 protectWriteOnce(schema, ['resolvedAt', 'resolvedBy', 'resolutionCode']);
 schema.index({ instructorId: 1, sourceType: 1, sourceId: 1 }, { unique: true });
 schema.index({ instructorId: 1, resolvedAt: 1, openedAt: 1 });
+schema.index({ openedAt: 1 }, { partialFilterExpression: { resolvedAt: null } });
 schema.index({ paymentId: 1, resolvedAt: 1 });
 export const FinancialHold = mongoose.model('FinancialHold', schema);

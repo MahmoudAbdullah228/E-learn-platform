@@ -10,10 +10,21 @@ export const reportConflict = () => new ApiError(409, 'FINANCE_REPORT_REQUIRES_R
 const max = BigInt(Number.MAX_SAFE_INTEGER);
 const paidStatuses = ['paid', 'refunded'];
 const fullRefund = { kind: 'full', status: 'succeeded' };
+const dayMs = 86_400_000;
 
-export function safeReportAmount(value) {
+function safeReportAmount(value) {
   if (value > max || value < -max) throw reportConflict();
   return Number(value);
+}
+
+export function reportDateFilter(query, asOf) {
+  if (query.to > asOf) throw new ApiError(400, 'INVALID_FINANCIAL_RANGE', 'The range cannot end in the future');
+  return query.from ? { $gte: query.from, $lt: query.to } : { $lte: asOf };
+}
+
+export function reportWindow(query, asOf) {
+  reportDateFilter(query, asOf);
+  return { from: query.from ?? new Date(asOf.getTime() - 30 * dayMs), to: query.to ?? asOf };
 }
 
 // Convert through Int64 to retain every minor unit of BSON doubles. Direct conversion
@@ -55,7 +66,9 @@ const currentLedgerAmount = { $cond: [
   { $and: [{ $eq: [{ $ifNull: ['$payoutId', null] }, null] }, validLedgerSign] }, '$amountMinor', null,
 ] };
 
-export async function readInstructorSummary({ owner, range, asOf, session }) {
+export async function readFinanceSummary({ currency, instructorId, range, asOf, session }) {
+  const scope = instructorId ? { instructorId } : {};
+  const owner = { ...scope, currency };
   const bounds = { $gte: range.from, $lt: range.to };
   const sales = (await summarize(Order, [{ $match: { ...owner, status: { $in: paidStatuses }, paidAt: bounds } }],
     splitFields, null, session)).get(null) ?? zero;
@@ -63,9 +76,10 @@ export async function readInstructorSummary({ owner, range, asOf, session }) {
     { $match: { ...owner, ...fullRefund, completedAt: bounds } },
     { $lookup: { from: Order.collection.name, localField: 'orderId', foreignField: '_id',
       pipeline: [{ $match: { ...owner, status: 'refunded' } },
-        { $project: { amountMinor: 1, platformAmountMinor: 1, instructorAmountMinor: 1 } }], as: 'sale' } },
+        { $project: { instructorId: 1, amountMinor: 1, platformAmountMinor: 1, instructorAmountMinor: 1 } }], as: 'sale' } },
     { $set: { sale: { $first: '$sale' } } },
     { $set: { gross: { $cond: [{ $and: [{ $eq: ['$amountMinor', '$sale.amountMinor'] },
+      { $eq: ['$instructorId', '$sale.instructorId'] },
       { $eq: ['$amountMinor', '$paymentAmountMinor'] }] }, '$amountMinor', null] } } },
   ], { gross: '$gross', commission: '$sale.platformAmountMinor', instructor: '$sale.instructorAmountMinor' },
   null, session)).get(null) ?? zero;
@@ -85,7 +99,7 @@ export async function readInstructorSummary({ owner, range, asOf, session }) {
     { total: '$amountMinor', simulated: { $cond: [{ $eq: ['$transferMethod', 'test_simulation'] }, '$amountMinor', 0] } },
     null, session);
   const paid = payouts.get(null);
-  const activeHoldCount = await FinancialHold.countDocuments({ instructorId: owner.instructorId,
+  const activeHoldCount = await FinancialHold.countDocuments({ ...scope,
     resolvedAt: null, openedAt: { $lte: asOf } }).session(session).maxTimeMS(5000);
 
   const amounts = {

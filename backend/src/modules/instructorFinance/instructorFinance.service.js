@@ -8,10 +8,10 @@ import { Refund } from '../../models/Refund.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { createKeysetCursor } from '../../utils/keysetCursor.js';
 import { sumMinorUnits } from '../../utils/money.js';
+import { readFinanceSummary, reportConflict, reportDateFilter, reportWindow } from '../finance/financeSummary.service.js';
 import { toPayoutItem } from '../payouts/payout.presenter.js';
 import { payoutItemLimit } from '../payouts/payoutLedger.service.js';
 import { toInstructorEarning, toInstructorPayout, toInstructorSale } from './instructorFinance.presenter.js';
-import { readInstructorSummary, reportConflict } from './instructorFinanceSummary.service.js';
 
 const payoutFields = 'status currency amountMinor lineCount periodStart periodEnd cutoffAt createdAt paidAt cancelledAt transferMethod';
 const saleFields = 'courseId courseTitleSnapshot status currency amountMinor platformAmountMinor instructorAmountMinor paidAt paymentConfirmedAt';
@@ -19,12 +19,6 @@ const earningFields = 'orderId type status amountMinor currency createdAt eligib
 const byId = rows => new Map(rows.map(row => [String(row._id), row]));
 const objectId = id => new mongoose.Types.ObjectId(id);
 const ownerOf = (id, currency = 'EGP') => ({ instructorId: objectId(id), currency });
-const dayMs = 86_400_000;
-
-function timeWindow(query, asOf) {
-  if (query.to > asOf) throw new ApiError(400, 'INVALID_FINANCIAL_RANGE', 'The range cannot end in the future');
-  return query.from ? { $gte: query.from, $lt: query.to } : { $lte: asOf };
-}
 
 const cursorFor = kind => createKeysetCursor({ namespace: `instructor-finance:${kind}:v1`,
   normalizeFilters: ({ instructorId, currency, from, to, courseId, type, status }) =>
@@ -84,16 +78,15 @@ export function createInstructorFinanceService({ clock = () => new Date() } = {}
   return Object.freeze({
     summary({ instructorId, query }) {
       return read(async (session, asOf) => {
-        timeWindow(query, asOf);
-        const range = { from: query.from ?? new Date(asOf.getTime() - 30 * dayMs), to: query.to ?? asOf };
-        const summary = await readInstructorSummary({ owner: ownerOf(instructorId, query.currency), range, asOf, session });
+        const range = reportWindow(query, asOf);
+        const summary = await readFinanceSummary({ ...ownerOf(instructorId, query.currency), range, asOf, session });
         return { summary };
       });
     },
     sales({ instructorId, query }) {
       return read(async (session, asOf) => {
         const owner = ownerOf(instructorId, query.currency);
-        const filter = { ...owner, status: query.status ?? { $in: ['paid', 'refunded'] }, paidAt: timeWindow(query, asOf),
+        const filter = { ...owner, status: query.status ?? { $in: ['paid', 'refunded'] }, paidAt: reportDateFilter(query, asOf),
           ...(query.courseId && { courseId: objectId(query.courseId) }) };
         const { page, pagination } = await listPage({ model: Order, filter, sortField: 'paidAt', fields: saleFields,
           query, cursor: cursors.sales, instructorId, session });
@@ -104,7 +97,7 @@ export function createInstructorFinanceService({ clock = () => new Date() } = {}
     earnings({ instructorId, query }) {
       return read(async (session, asOf) => {
         const owner = ownerOf(instructorId, query.currency);
-        const filter = { ...owner, createdAt: timeWindow(query, asOf),
+        const filter = { ...owner, createdAt: reportDateFilter(query, asOf),
           ...(query.status && { status: query.status }), ...(query.type && { type: query.type }) };
         const { page, pagination } = await listPage({ model: EarningEntry, filter, sortField: 'createdAt', fields: earningFields,
           query, cursor: cursors.earnings, instructorId, session });
@@ -122,7 +115,7 @@ export function createInstructorFinanceService({ clock = () => new Date() } = {}
     },
     payouts({ instructorId, query }) {
       return read(async (session, asOf) => {
-        const filter = { ...ownerOf(instructorId, query.currency), createdAt: timeWindow(query, asOf),
+        const filter = { ...ownerOf(instructorId, query.currency), createdAt: reportDateFilter(query, asOf),
           ...(query.status && { status: query.status }) };
         const { page, pagination } = await listPage({ model: Payout, filter, sortField: 'createdAt', fields: payoutFields,
           query, cursor: cursors.payouts, instructorId, session });

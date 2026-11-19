@@ -76,6 +76,7 @@ schema.index({ transferReference: 1 }, { unique: true,
   partialFilterExpression: { transferReference: { $type: 'string' } } });
 schema.index({ instructorId: 1, createdAt: -1, _id: -1 });
 schema.index({ instructorId: 1, status: 1, paidAt: 1 });
+schema.index({ currency: 1, paidAt: 1 }, { partialFilterExpression: { status: 'paid' } });
 schema.index({ status: 1, createdAt: 1 });
 schema.index({ createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });

@@ -9,11 +9,13 @@ import { createApp } from '../src/app.js';
 import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { assertTransactionSupport } from '../src/config/transactions.js';
 import { AdminAuditEvent } from '../src/models/AdminAuditEvent.js';
+import { Course } from '../src/models/Course.js';
 import { EarningEntry } from '../src/models/EarningEntry.js';
 import { Enrollment } from '../src/models/Enrollment.js';
 import { FinancialHold } from '../src/models/FinancialHold.js';
 import { FinancialPolicyVersion } from '../src/models/FinancialPolicyVersion.js';
 import { InstructorFinanceState } from '../src/models/InstructorFinanceState.js';
+import { InstructorApplication } from '../src/models/InstructorApplication.js';
 import { Order } from '../src/models/Order.js';
 import { Payment } from '../src/models/Payment.js';
 import { Payout } from '../src/models/Payout.js';
@@ -33,7 +35,7 @@ import { createPayoutService } from '../src/modules/payouts/payout.service.js';
 import { payoutPeriodSchema } from '../src/modules/payouts/payout.schemas.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 
-const models = [AdminAuditEvent, EarningEntry, Enrollment, FinancialHold, FinancialPolicyVersion, InstructorFinanceState,
+const models = [AdminAuditEvent, Course, EarningEntry, Enrollment, FinancialHold, FinancialPolicyVersion, InstructorApplication, InstructorFinanceState,
   Order, Payment, Payout, PayoutItem, Refund, RefreshSession, User, WebhookEvent];
 let ready = false; let now; let sequence; const workers = [];
 const clock = () => new Date(now);
@@ -550,6 +552,71 @@ test('financial summaries retain the last unit of a BSON double and reject amoun
   await fixture({ instructor, amount: 1 });
   const out = await get('finance/summary').expect(409);
   assert.equal(out.body.error.code, 'FINANCE_REPORT_REQUIRES_REVIEW');
+});
+
+test('admin dashboard counts current users and courses while finance totals use recorded events and existing account scope', async () => {
+  const admin = await payoutActor(); const student = await payoutActor('student');
+  const first = await fixture({ amount: 2000 }); const second = await fixture({ amount: 1000 });
+  await User.updateOne({ _id: first.instructor.id }, { $set: { roles: ['student', 'instructor'] } });
+  await User.updateOne({ _id: second.instructor.id }, { $set: { roles: ['student'], status: 'suspended' } });
+  await InstructorApplication.create({ userId: student.auth.userId, expertise: 'Backend',
+    bio: 'An instructor application biography with sufficient detail for the form.' });
+  const courses = await Course.insertMany(['draft', 'pending_review', 'published', 'archived'].map(status => ({
+    instructorId: first.instructor.id, categoryId: new mongoose.Types.ObjectId(),
+    title: `Course ${status}`, slug: `course-${status}`, description: 'A course description for finance reporting.',
+    priceMinor: 0, status,
+  })));
+  await Enrollment.create({ studentId: student.auth.userId, courseId: courses[2].id, enrolledAt: now });
+  await debt(first, { occurredAt: now });
+  await Refund.create({ orderId: first.order.id, paymentId: first.payment.id, instructorId: first.instructor.id, source: 'provider',
+    kind: 'full', amountMinor: 2000, paymentAmountMinor: 2000, currency: 'EGP', status: 'failed', providerRefundId: 're_failed_report' });
+  await hold(first);
+  const api = request(createApp());
+  const get = (path, query) => api.get(`/api/v1/admin/${path}`).auth(admin.token, { type: 'bearer' }).query(query ?? {});
+  await api.get('/api/v1/admin/dashboard').expect(401).expect('Cache-Control', 'no-store');
+  await api.get('/api/v1/admin/finance/summary').auth(student.token, { type: 'bearer' }).expect(403);
+  await get('dashboard', { instructorId: first.instructor.id }).expect(400);
+  await get('finance/summary', { instructorId: 'bad' }).expect(400);
+  await get('finance/summary', { instructorId: String(new mongoose.Types.ObjectId()) }).expect(404);
+  await get('dashboard', { from: '2025-01-01T00:00:00Z', to: '2026-02-01T00:00:00Z' }).expect(400);
+  await get('dashboard', { from: now.toISOString(), to: new Date(now.getTime() + 86_400_000).toISOString() }).expect(400);
+  const dashboard = (await get('dashboard').expect(200).expect('Cache-Control', 'no-store')).body.data;
+  assert.deepEqual(dashboard.users, { total: 4, active: 3, suspended: 1, students: 3, activeInstructors: 1, pendingApplications: 1 });
+  assert.deepEqual(dashboard.courses, { total: 4, draft: 1, pendingReview: 1, published: 1, rejected: 0, unavailable: 0, archived: 1 });
+  assert.equal(dashboard.finance.saleCount, 2);
+  assert.equal(dashboard.finance.grossSalesMinor, 3000);
+  assert.equal(dashboard.finance.successfulRefundCount, 1);
+  assert.equal(dashboard.finance.successfulRefundsMinor, 2000);
+  assert.equal(dashboard.finance.netSalesMinor, 1000);
+  assert.equal(dashboard.finance.platformCommissionNetMinor, 200);
+  assert.equal(dashboard.finance.instructorEarnedNetMinor, 800);
+  assert.equal(dashboard.finance.pendingMinor, 800);
+  assert.equal(dashboard.finance.paidPayoutsMinor, 1600);
+  assert.equal(dashboard.finance.negativeCarryMinor, -1600);
+  assert.equal(dashboard.finance.activeHoldCount, 1);
+  assert.equal(JSON.stringify(dashboard).includes('@example.test'), false);
+  assert.ok(Buffer.byteLength(JSON.stringify(dashboard)) < 4096);
+  const range = { from: dashboard.finance.range.from, to: dashboard.finance.range.to };
+  const global = (await get('finance/summary', range).expect(200)).body.data;
+  assert.equal(global.instructorId, null);
+  assert.equal(global.summary.netSalesMinor, dashboard.finance.netSalesMinor);
+  const scoped = (await get('finance/summary', { ...range, instructorId: second.instructor.id }).expect(200)).body.data;
+  assert.equal(scoped.instructorId, second.instructor.id);
+  assert.equal(scoped.summary.grossSalesMinor, 1000);
+  assert.equal(scoped.summary.successfulRefundsMinor, 0);
+  assert.equal(scoped.summary.activeHoldCount, 0);
+});
+
+test('marketplace finance detects overflow across accounts without rounding a valid instructor total', async () => {
+  const admin = await payoutActor();
+  const high = await fixture({ amount: Number.MAX_SAFE_INTEGER });
+  await fixture({ amount: 1 });
+  const api = request(createApp());
+  const get = () => api.get('/api/v1/admin/finance/summary').auth(admin.token, { type: 'bearer' });
+  const result = await get().expect(409);
+  assert.equal(result.body.error.code, 'FINANCE_REPORT_REQUIRES_REVIEW');
+  const scoped = await get().query({ instructorId: high.instructor.id }).expect(200);
+  assert.equal(scoped.body.data.summary.grossSalesMinor, Number.MAX_SAFE_INTEGER);
 });
 
 async function refundFor(f) {

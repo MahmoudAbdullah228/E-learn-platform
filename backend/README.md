@@ -42,6 +42,8 @@ S3-10 adds payout sealing, confirmation, cancellation and reconciliation in Open
 See [settlement operations](docs/sprint_3_payout_lifecycle.md).
 S3-11 adds private instructor sales, earnings, balances and settlement history in OpenAPI
 **1.8.0**. See [report definitions and frontend usage](docs/sprint_3_instructor_finance.md).
+S3-12 adds the admin dashboard, scoped finance summaries and safe order references in OpenAPI
+**1.9.0**. See [admin finance and refund history](docs/sprint_3_admin_finance.md).
 
 ## Requirements
 

@@ -10,3 +10,8 @@ export const adminOrderQuerySchema = z.object({ ...paginationFields, status,
   studentId: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid student id').optional(),
   courseId: z.string().regex(/^[a-f\d]{24}$/i, 'Invalid course id').optional(),
 }).strict();
+
+export const adminOrderDetailQuerySchema = z.strictObject({
+  refundLimit: paginationFields.limit,
+  refundCursor: z.string().max(1024).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/).optional(),
+});

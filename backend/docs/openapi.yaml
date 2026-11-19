@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.8.0
+  version: 1.9.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -37,6 +37,7 @@ info:
     S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
     S3-10 seals payout drafts and records externally verified settlement outcomes.
     S3-11 adds instructor-owned sales, earnings, balances and payout statements.
+    S3-12 adds admin metrics, instructor earnings filters and administrator-only order references.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -51,6 +52,8 @@ servers:
   - url: /api/v1
     description: API on the same host as this documentation
 tags:
+  - name: Admin finance
+    description: Marketplace metrics, financial totals and instructor earnings for administrators
   - name: Instructor finance
     description: Private instructor financial reports and historical statements
   - name: Payouts
@@ -96,6 +99,66 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      tags: [Admin finance]
+      summary: Read current marketplace counts and financial activity
+      description: Counts and balances are current. The range filters recorded sales, full refunds and paid settlements.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+      responses:
+        '200':
+          description: Administrator financial snapshot
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/AdminDashboardData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/finance/summary:
+    get:
+      operationId: getAdminFinanceSummary
+      tags: [Admin finance]
+      summary: Read marketplace or instructor financial totals
+      description: Optional instructorId scopes totals to an existing account, including suspended and former instructors.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { name: instructorId, in: query, schema: { $ref: '#/components/schemas/InstructorFinanceId' } }
+      responses:
+        '200':
+          description: Administrator financial snapshot
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/AdminFinanceSummaryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
   /instructor/finance/summary:
     get:
       operationId: getInstructorFinanceSummary
@@ -2690,12 +2753,15 @@ paths:
       operationId: getAdminOrder
       tags: [Orders]
       summary: Read one order and safe payment details as administrator
-      description: Admin only; no provider references, customer email, keys or leases. Shared private-read quota and no-store.
+      description: Admin only. Includes safe Stripe identifiers and a paginated refund history. Shared private-read quota and no-store.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderId' }
+        - { name: refundLimit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: refundCursor, in: query, description: Opaque cursor bound to this order and administrator, schema: { type: string, maxLength: 1024 } }
       responses:
         '200':
-          description: Financial split snapshot and safe payment status
+          description: Financial split, safe Stripe identifiers and refund history
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AdminOrderDetailsResponse' }
@@ -2915,8 +2981,40 @@ components:
       type: object
       required: [summary]
       properties:
-        summary: { $ref: '#/components/schemas/InstructorFinanceSummary' }
-    InstructorFinanceSummary:
+        summary: { $ref: '#/components/schemas/FinanceSummary' }
+    AdminFinanceSummaryData:
+      type: object
+      required: [instructorId, summary]
+      properties:
+        instructorId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        summary: { $ref: '#/components/schemas/FinanceSummary' }
+    AdminDashboardData:
+      type: object
+      required: [users, courses, finance]
+      properties:
+        users:
+          type: object
+          required: [total, active, suspended, students, activeInstructors, pendingApplications]
+          properties:
+            total: { type: integer, minimum: 0 }
+            active: { type: integer, minimum: 0 }
+            suspended: { type: integer, minimum: 0 }
+            students: { type: integer, minimum: 0 }
+            activeInstructors: { type: integer, minimum: 0 }
+            pendingApplications: { type: integer, minimum: 0 }
+        courses:
+          type: object
+          required: [total, draft, pendingReview, published, rejected, unavailable, archived]
+          properties:
+            total: { type: integer, minimum: 0 }
+            draft: { type: integer, minimum: 0 }
+            pendingReview: { type: integer, minimum: 0 }
+            published: { type: integer, minimum: 0 }
+            rejected: { type: integer, minimum: 0 }
+            unavailable: { type: integer, minimum: 0 }
+            archived: { type: integer, minimum: 0 }
+        finance: { $ref: '#/components/schemas/FinanceSummary' }
+    FinanceSummary:
       type: object
       required: [currency, range, asOf, saleCount, successfulRefundCount, paidPayoutCount, activeHoldCount, hasActiveHolds, grossSalesMinor, successfulRefundsMinor, netSalesMinor, platformCommissionNetMinor, instructorEarnedNetMinor, pendingMinor, pendingSalesMinor, pendingAdjustmentsMinor, eligibleAvailableMinor, negativeCarryMinor, reservedMinor, paidPayoutsMinor, simulatedPaidPayoutsMinor]
       properties:
@@ -3629,11 +3727,45 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [order, payment]
+          required: [order, payment, refunds, refundPagination]
           properties:
             order: { $ref: '#/components/schemas/AdminOrder' }
             payment:
-              oneOf: [{ $ref: '#/components/schemas/PaymentStatus' }, { type: 'null' }]
+              oneOf: [{ $ref: '#/components/schemas/AdminOrderPayment' }, { type: 'null' }]
+            refunds: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminOrderRefund' } }
+            refundPagination:
+              type: object
+              required: [hasMore, nextCursor]
+              properties:
+                hasMore: { type: boolean }
+                nextCursor: { type: [string, 'null'] }
+    AdminOrderPayment:
+      type: object
+      additionalProperties: false
+      required: [id, provider, status, amountMinor, currency, paidAt, paymentConfirmedAt, paymentIntentId, checkoutSessionId]
+      properties:
+        id: { type: string }
+        provider: { const: stripe }
+        status: { enum: [created, processing, succeeded, failed, refunded] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        paidAt: { type: [string, 'null'], format: date-time }
+        paymentConfirmedAt: { type: [string, 'null'], format: date-time }
+        paymentIntentId: { type: [string, 'null'], maxLength: 255, pattern: '^pi_[A-Za-z0-9_]+$' }
+        checkoutSessionId: { type: [string, 'null'], maxLength: 255, pattern: '^cs_(test|live)_[A-Za-z0-9_]+$' }
+    AdminOrderRefund:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, amountMinor, currency, createdAt, completedAt, providerRefundId]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        kind: { enum: [full, partial] }
+        status: { enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        providerRefundId: { type: [string, 'null'], maxLength: 255, pattern: '^re_[A-Za-z0-9_]+$' }
     CheckoutOrder:
       type: object
       additionalProperties: false

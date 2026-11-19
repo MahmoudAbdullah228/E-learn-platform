@@ -90,4 +90,5 @@ schema.index({ status: 1, nextRecoveryAt: 1, recoveryLeaseUntil: 1 });
 schema.index({ instructorId: 1, currency: 1, completedAt: 1 }, {
   partialFilterExpression: { status: 'succeeded', kind: 'full' },
 });
+schema.index({ currency: 1, completedAt: 1 }, { partialFilterExpression: { status: 'succeeded', kind: 'full' } });
 export const Refund = mongoose.model('Refund', schema);

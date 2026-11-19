@@ -79,8 +79,8 @@ S3-19 ليس اختبارًا مؤجلًا إلى الدفعة 7: ضوابطه �
 | S3-08 | مكتملة محليًا؛ 627 PASS + lint/OpenAPI، 398.91 ثانية | dated eligibility/shared guard وsigned carry-forward؛ [الدليل](sprint_3_earnings_eligibility.md)؛ قبول Staging منفصل |
 | S3-09 | رُفعت في `3ffb52a` | معاينة، حجز ذري وكشف موقّع واحتساب الدين. [دليل التشغيل](sprint_3_payout_drafts.md) |
 | S3-10 | رُفعت في `3a169f5`؛ 639 PASS + lint/OpenAPI | ختم وتسوية وإلغاء موثق، مع حجز النتيجة غير المعروفة ومعالجة اعتماد الاسترداد. [دليل التشغيل](sprint_3_payout_lifecycle.md) |
-| S3-11 | مكتملة محليًا؛ 643 PASS + lint/OpenAPI | المدرّس يرى مبيعاته وأرباحه وتسوياته فقط. [تعريفات التقرير](sprint_3_instructor_finance.md) |
-| S3-12 | لم تبدأ | admin metrics والمراجع المالية آمنة وصحيحة |
+| S3-11 | رُفعت في `7c0f321`؛ 643 PASS + lint/OpenAPI | المدرّس يرى مبيعاته وأرباحه وتسوياته فقط. [تعريفات التقرير](sprint_3_instructor_finance.md) |
+| S3-12 | مكتملة محليًا؛ 646 PASS + lint/OpenAPI | مؤشرات الأدمن، إجماليات المنصة والمدرّس، ومراجع الطلب وسجل الاسترداد. [العقود](sprint_3_admin_finance.md) |
 | S3-13 | لم تبدأ | candidate لا يعدّل live، ومعه عقود كاملة |
 | S3-14 | لم تبدأ | approval/media/progress ذري ومتوافق |
 | S3-15 | لم تبدأ | migration/restore/rollback/monitoring عليها دليل |
@@ -115,7 +115,7 @@ S3-04/S3-05 رُفعا في commit `bedffc9`. تحديث لاحق: نُفّذ S3
 S3-06 رُفعت في commit `e1314ff`. نُفّذت بعدها S3-07 محليًا لإعادة الشراء/التفعيل المجاني
 المثبت، مع الاحتفاظ بالتقدّم وإضافة ملخص الاسترداد الآمن للطلبات؛ [الدليل](sprint_3_repurchase.md).
 نُفّذت بعدها S3-08 محليًا للأهلية الموثقة والـholds والرصيد الموقّع؛ [الدليل](sprint_3_earnings_eligibility.md).
-رُفعت S3-07/S3-08 في `b146dad` وS3-09 في `3ffb52a` وS3-10 في `3a169f5`. نُفّذت S3-11 محليًا والتالية **S3-12**. قبول Staging المالي ما زال مفتوحًا.
+رُفعت S3-07/S3-08 في `b146dad` وS3-09 في `3ffb52a` وS3-10 في `3a169f5` وS3-11 في `7c0f321`. نُفّذت S3-12 محليًا والتالية **S3-13**. قبول Staging المالي ما زال مفتوحًا.
 
 1. Models/indexes، أو بيان عدم الحاجة لموديل/فهرس جديد؛ Zod request validation.
 2. Services/policies/adapters ثم controllers/routes/middlewares؛ لا provider call داخل transaction callback قابل للإعادة.

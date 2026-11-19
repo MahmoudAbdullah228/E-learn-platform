@@ -83,6 +83,8 @@ import { createRefundRouters } from './modules/refunds/refund.routes.js';
 import { createPayoutRouter } from './modules/payouts/payout.routes.js';
 import { createInstructorFinanceRouter } from './modules/instructorFinance/instructorFinance.routes.js';
 import { createInstructorFinanceService } from './modules/instructorFinance/instructorFinance.service.js';
+import { createAdminFinanceRouter } from './modules/adminFinance/adminFinance.routes.js';
+import { createAdminFinanceService } from './modules/adminFinance/adminFinance.service.js';
 import { createPayoutService } from './modules/payouts/payout.service.js';
 
 export function createApp({
@@ -153,7 +155,8 @@ export function createApp({
     '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users',
     '/api/v1/admin/courses', '/api/v1/admin/refunds', '/api/v1/admin/payouts',
     '/api/v1/admin/instructors/:instructorId/settlement-preview', '/api/v1/instructor/finance',
-    '/api/v1/instructor/sales', '/api/v1/instructor/earnings', '/api/v1/instructor/payouts'], noStore);
+    '/api/v1/instructor/sales', '/api/v1/instructor/earnings', '/api/v1/instructor/payouts',
+    '/api/v1/admin/dashboard', '/api/v1/admin/finance'], noStore);
   application.use(
     pinoHttp({
       logger,
@@ -244,6 +247,7 @@ export function createApp({
   application.use('/api/v1/admin', createPayoutRouter({ service: createPayoutService(), rateLimitStoreFactory }));
   application.use('/api/v1/instructor', createInstructorFinanceRouter({ service: createInstructorFinanceService(),
     rateLimitStoreFactory }));
+  application.use('/api/v1/admin', createAdminFinanceRouter({ service: createAdminFinanceService(), rateLimitStoreFactory }));
   application.use(notFoundHandler);
   application.use(errorHandler);
 

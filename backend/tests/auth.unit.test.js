@@ -223,5 +223,6 @@ test('limited routes request isolated shared-store instances by limiter namespac
       'admin-payouts-read',
       'admin-payouts-write',
       'instructor-finance',
+      'admin-finance',
     ]);
 });

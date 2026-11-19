@@ -55,4 +55,5 @@ schema.index({ status: 1, expiresAt: 1 });
 schema.index({ instructorId: 1, currency: 1, paidAt: -1, _id: -1 }, {
   partialFilterExpression: { status: { $in: ['paid', 'refunded'] } },
 });
+schema.index({ currency: 1, paidAt: 1 }, { partialFilterExpression: { status: { $in: ['paid', 'refunded'] } } });
 export const Order = mongoose.model('Order', schema);

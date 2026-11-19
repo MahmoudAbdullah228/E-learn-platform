@@ -38,6 +38,13 @@ export const financialRangeSchema = z.object({ from: z.date(), to: z.date() }).s
   .refine(value => value.from < value.to && value.to - value.from <= 366 * 86400_000,
     'A positive range of at most 366 days is required');
 
+const utc = z.iso.datetime().refine(value => !/\.\d{4,}Z$/.test(value), 'Use millisecond precision')
+  .transform(value => new Date(value));
+export const financialWindowFields = { from: utc.optional(), to: utc.optional(), currency: currencySchema.default('EGP') };
+export const financialQueryRange = schema => schema.refine(({ from, to }) =>
+  (!from && !to) || financialRangeSchema.safeParse({ from, to }).success,
+{ path: ['to'], message: 'Supply both UTC bounds for a positive interval of at most 366 days' });
+
 export const holdInputSchema = z.object({
   paymentId: financialIdSchema.nullable().default(null),
   sourceType: z.enum(['refund', 'payment', 'payout', 'dispute', 'legacy', 'operations']),
