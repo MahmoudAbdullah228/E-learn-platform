@@ -428,6 +428,130 @@ const execute = (service, actor, payout, command, input, idempotencyKey = random
 });
 const attemptFor = payout => ({ transferAttemptId: payout.transferAttemptId, transferMethod: payout.transferMethod });
 
+const instructorApi = (actor, api = request(createApp())) => (path, query = {}) =>
+  api.get(`/api/v1/instructor/${path}`).auth(actor.token, { type: 'bearer' }).query(query);
+
+test('instructor finance is owner scoped, strips private fields and binds cursors to actor, list and filters', async () => {
+  const owner = await payoutActor('instructor'); const other = await payoutActor('instructor');
+  const admin = await payoutActor(); const student = await payoutActor('student');
+  const instructor = await User.findById(owner.auth.userId);
+  const sale = await fixture({ instructor, amount: 1200 });
+  const second = await fixture({ instructor, amount: 1400 });
+  const outsider = await fixture({ instructor: await User.findById(other.auth.userId), amount: 10_000 });
+  const old = await debt(outsider);
+  await worker().processNext();
+  const ownDraft = await draftFor(second, admin, createPayoutService({ clock }));
+  const api = request(createApp()); const get = instructorApi(owner, api);
+  await api.get('/api/v1/instructor/finance/summary').expect(401).expect('Cache-Control', 'no-store');
+  await instructorApi(student, api)('sales').expect(403).expect('Cache-Control', 'no-store');
+  await instructorApi(admin, api)('earnings').expect(403);
+  await get('finance/summary', { instructorId: other.auth.userId }).expect(400);
+  await get('payouts', { from: now.toISOString() }).expect(400);
+  await get('sales', { status: 'pending' }).expect(400);
+  const foreign = await get(`payouts/${old.payout.id}`).expect(404);
+  const missing = await get(`payouts/${new mongoose.Types.ObjectId()}`).expect(404);
+  assert.deepEqual(foreign.body, missing.body);
+  const first = (await get('sales', { limit: 1 }).expect(200)).body.data;
+  assert.equal(first.pagination.hasMore, true);
+  const cursor = first.pagination.nextCursor;
+  const next = (await get('sales', { limit: 1, cursor }).expect(200)).body.data;
+  assert.deepEqual([first.sales[0].id, next.sales[0].id], [sale.order.id, second.order.id].sort().reverse());
+  assert.equal(next.pagination.nextCursor, null);
+  const summaries = await get('sales', { limit: 1, status: 'paid', cursor }).expect(400);
+  assert.equal(summaries.body.error.code, 'INVALID_CURSOR');
+  await instructorApi(other, api)('sales', { cursor }).expect(400);
+  await get('earnings', { cursor }).expect(400);
+  assert.deepEqual(Object.keys(first.sales[0]).sort(), ['id', 'courseId', 'courseTitle', 'status', 'currency', 'amountMinor',
+    'platformCommissionMinor', 'instructorEarnedMinor', 'paidAt', 'paymentConfirmedAt', 'refund'].sort());
+  const own = (await get(`payouts/${ownDraft.id}`).expect(200).expect('Cache-Control', 'no-store')).body.data;
+  assert.equal(own.items.length, 2);
+  for (const field of ['createdBy', 'instructorId', 'sealedBy', 'transferReference', 'transferAttemptId', 'idempotencyKey']) {
+    assert.equal(Object.hasOwn(own.payout, field), false);
+  }
+  await User.updateOne({ _id: owner.auth.userId }, { $set: { status: 'suspended' } });
+  await get('payouts').expect(401);
+});
+
+test('financial summary uses event boundaries, deducts refunds once and separates current liabilities', async () => {
+  const actor = await payoutActor('instructor');
+  const instructor = await User.findById(actor.auth.userId);
+  const start = new Date(now.getTime() - 86_400_000);
+  const before = new Date(start.getTime() - 1);
+  const within = new Date(start.getTime() + 1);
+  const old = await fixture({ instructor, amount: 2000 });
+  const reversal = await fixture({ instructor, amount: 400 });
+  const atEnd = await fixture({ instructor, amount: 999 });
+  const recorded = await debt(old, { occurredAt: start });
+  await Order.updateOne({ _id: old.order.id }, { $set: { paidAt: before } });
+  await Order.updateOne({ _id: reversal.order.id }, { $set: { paidAt: within } });
+  await refundFor(reversal);
+  const boundary = new Date(now);
+  now = new Date(now.getTime() + 1);
+  await hold(old);
+  const get = instructorApi(actor);
+  const range = { from: start.toISOString(), to: boundary.toISOString() };
+  let body = (await get('finance/summary', range).expect(200)).body.data.summary;
+  assert.equal(body.saleCount, 1);
+  assert.equal(body.grossSalesMinor, 400);
+  assert.equal(body.successfulRefundsMinor, 2000);
+  assert.equal(body.netSalesMinor, -1600);
+  assert.equal(body.platformCommissionNetMinor, -320);
+  assert.equal(body.instructorEarnedNetMinor, -1280);
+  assert.equal(body.paidPayoutsMinor, 1600);
+  assert.equal(body.simulatedPaidPayoutsMinor, 1600);
+  assert.equal(body.negativeCarryMinor, -1600);
+  assert.equal(body.eligibleAvailableMinor, -1600);
+  assert.equal(body.pendingMinor, atEnd.sale.amountMinor);
+  assert.equal(body.activeHoldCount, 1);
+  assert.deepEqual(body.range, range);
+  body = (await get('finance/summary', { from: range.from, to: now.toISOString() }).expect(200)).body.data.summary;
+  assert.equal(body.grossSalesMinor, 1399);
+  assert.equal(body.successfulRefundsMinor, 2400);
+  assert.equal(body.instructorEarnedNetMinor, atEnd.sale.amountMinor - 1600);
+  assert.equal(body.negativeCarryMinor, -1600);
+  const page = (await get('sales', range).expect(200)).body.data;
+  assert.deepEqual(page.sales.map(row => row.id), [reversal.order.id]);
+  assert.equal(page.sales[0].refund.amountMinor, 400);
+  const reversed = (await get('earnings', { status: 'reversed' }).expect(200)).body.data.earnings;
+  assert.equal(reversed.length, 1);
+  assert.equal(reversed[0].id, reversal.sale.id);
+  const adjustments = (await get('earnings', { type: 'refund_adjustment' }).expect(200)).body.data.earnings;
+  assert.deepEqual(adjustments.map(entry => entry.amountMinor), [-1600]);
+  assert.equal((await get(`payouts/${recorded.payout.id}`).expect(200)).body.data.payout.simulated, true);
+});
+
+test('cancelled statements remain visible without counting them as paid or reserved', async () => {
+  const actor = await payoutActor('instructor'); const admin = await payoutActor();
+  const f = await fixture({ instructor: await User.findById(actor.auth.userId) });
+  const service = createPayoutService({ clock });
+  const draft = await draftFor(f, admin, service);
+  const get = instructorApi(actor);
+  assert.equal((await get('finance/summary').expect(200)).body.data.summary.reservedMinor, 800);
+  await execute(service, admin, draft, 'cancel', { reason: 'Discard this test settlement draft' });
+  const summary = (await get('finance/summary').expect(200)).body.data.summary;
+  assert.equal(summary.reservedMinor, 0);
+  assert.equal(summary.paidPayoutsMinor, 0);
+  assert.equal(summary.eligibleAvailableMinor, 800);
+  const cancelled = (await get('payouts', { status: 'cancelled' }).expect(200)).body.data.payouts;
+  assert.equal(cancelled.length, 1);
+  assert.equal(cancelled[0].id, draft.id);
+  const detail = (await get(`payouts/${draft.id}`).expect(200)).body.data;
+  assert.equal(detail.payout.status, 'cancelled');
+  assert.equal(detail.items[0].amountMinor, 800);
+});
+
+test('financial summaries retain the last unit of a BSON double and reject amounts beyond the JSON safe range', async () => {
+  const actor = await payoutActor('instructor');
+  const instructor = await User.findById(actor.auth.userId);
+  const amount = Number.MAX_SAFE_INTEGER;
+  await fixture({ instructor, amount });
+  const get = instructorApi(actor);
+  assert.equal((await get('finance/summary').expect(200)).body.data.summary.grossSalesMinor, amount);
+  await fixture({ instructor, amount: 1 });
+  const out = await get('finance/summary').expect(409);
+  assert.equal(out.body.error.code, 'FINANCE_REPORT_REQUIRES_REVIEW');
+});
+
 async function refundFor(f) {
   const observation = { kind: 'refund', providerRefundId: `re_payout_${f.order.id}`, paymentIntentId: `pi_${f.order.id}`,
     amountMinor: f.order.amountMinor, currency: 'EGP', providerStatus: 'succeeded', providerCreatedAt: now,

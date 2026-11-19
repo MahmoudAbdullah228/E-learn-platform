@@ -22,7 +22,10 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 68);
+  assert.equal(Object.keys(json.body.paths).length, 73);
+  for (const path of ['finance/summary', 'sales', 'earnings', 'payouts', 'payouts/{payoutId}']) {
+    assert.deepEqual(json.body.paths[`/instructor/${path}`]?.get?.security, [{ bearerAuth: [] }]);
+  }
   for (const [method, path] of [['get', '/admin/instructors/{instructorId}/settlement-preview'],
     ['post', '/admin/payouts'], ['get', '/admin/payouts'], ['get', '/admin/payouts/{payoutId}'],
     ...['submit', 'mark-paid', 'cancel', 'reconcile'].map(action => ['post', `/admin/payouts/{payoutId}/${action}`])]) {

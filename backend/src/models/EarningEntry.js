@@ -42,6 +42,7 @@ schema.index({ orderId: 1 }, { unique: true, partialFilterExpression: { type: 's
 schema.index({ refundId: 1 }, { unique: true,
   partialFilterExpression: { type: 'refund_adjustment', refundId: { $type: 'objectId' } } });
 schema.index({ instructorId: 1, status: 1, createdAt: 1 });
+schema.index({ instructorId: 1, currency: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, eligibleAt: 1, _id: 1 });
 schema.index({ dependentOnPayoutId: 1, status: 1 });
 schema.index({ payoutId: 1 });

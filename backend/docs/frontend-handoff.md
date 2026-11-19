@@ -1,5 +1,13 @@
 # Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
 
+S3-11 adds instructor finance in OpenAPI **1.8.0**. Use the instructor token with
+`GET /instructor/finance/summary`, `/instructor/sales`, `/instructor/earnings`,
+`/instructor/payouts` and `/instructor/payouts/{payoutId}`. Summary activity follows the
+selected UTC period. Current balances and hold count are independent of that period.
+Use signed integers in EGP minor units. A negative balance represents debt carried forward.
+Send the returned `nextCursor` with the same filters for subsequent pages. Label simulated
+settlements explicitly. See [report definitions](sprint_3_instructor_finance.md).
+
 S3-10 adds admin `submit`, `mark-paid`, `cancel` and `reconcile` operations in OpenAPI **1.7.0**.
 Send `expectedRevision` from GET and a fresh `Idempotency-Key` for each new command.
 Retry the same key with the same payload after a lost response. Each command returns its
@@ -390,8 +398,8 @@ endpoint. Ledger `pending`/`eligible` describes financial readiness, never money
 The server checks frozen sale policy/trusted confirmation, exact expiry and unresolved
 holds/refunds/inbox/dependent transfers; it preserves signed debt and old financial history.
 Eligibility does not affect learner access, order paid status, or the provider refund flag.
-Payout and earnings dashboard APIs remain in their owning later Stories; do not call
-unimplemented plan routes or show a transfer button based on eligibility alone.
+The instructor finance API reports eligibility and holds separately. Eligibility alone
+does not authorize a transfer.
 See [internal behavior/operations](sprint_3_earnings_eligibility.md).
 
 ## S3-04 — Archive and legal/security access

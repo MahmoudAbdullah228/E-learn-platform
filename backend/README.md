@@ -40,6 +40,8 @@ S3-09 adds admin settlement preview, atomic payout draft reservation and payout 
 in OpenAPI **1.6.0**. See [payout draft operations](docs/sprint_3_payout_drafts.md).
 S3-10 adds payout sealing, confirmation, cancellation and reconciliation in OpenAPI **1.7.0**.
 See [settlement operations](docs/sprint_3_payout_lifecycle.md).
+S3-11 adds private instructor sales, earnings, balances and settlement history in OpenAPI
+**1.8.0**. See [report definitions and frontend usage](docs/sprint_3_instructor_finance.md).
 
 ## Requirements
 

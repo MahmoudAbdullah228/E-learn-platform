@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.7.0
+  version: 1.8.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -36,7 +36,7 @@ info:
     S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
     S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
     S3-10 seals payout drafts and records externally verified settlement outcomes.
-    Transfer confirmation and earnings dashboards remain later stories.
+    S3-11 adds instructor-owned sales, earnings, balances and payout statements.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -51,6 +51,8 @@ servers:
   - url: /api/v1
     description: API on the same host as this documentation
 tags:
+  - name: Instructor finance
+    description: Private instructor financial reports and historical statements
   - name: Payouts
     description: Admin settlement previews, drafts and manual transfer reconciliation
   - name: Health
@@ -94,6 +96,161 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /instructor/finance/summary:
+    get:
+      operationId: getInstructorFinanceSummary
+      tags: [Instructor finance]
+      summary: Read sales activity and current balances
+      description: Range applies to sale paidAt, confirmed full refund completedAt and payout paidAt. Default is the last 30 days. Current balances and holds are independent of the range.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorFinanceSummaryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/sales:
+    get:
+      operationId: listInstructorSales
+      tags: [Instructor finance]
+      summary: List your recorded course sales
+      description: Filters and sorts by paidAt. Refund details reflect the current snapshot and can fall outside the sale date range.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [paid, refunded] } }
+        - { name: courseId, in: query, schema: { $ref: '#/components/schemas/InstructorFinanceId' } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorSalesData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/earnings:
+    get:
+      operationId: listInstructorEarnings
+      tags: [Instructor finance]
+      summary: List your signed earning entries
+      description: Filters by createdAt. Includes reversed entries. An included entry identifies its current payout status.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [pending, eligible, included_in_payout, reversed] } }
+        - { name: type, in: query, schema: { enum: [sale, refund_adjustment] } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorEarningsData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/payouts:
+    get:
+      operationId: listInstructorPayouts
+      tags: [Instructor finance]
+      summary: List your settlement history
+      description: Filters by createdAt. Includes draft, pending, paid and cancelled settlements.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [draft, pending, paid, cancelled] } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorPayoutHistoryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/payouts/{payoutId}:
+    get:
+      operationId: getInstructorPayout
+      tags: [Instructor finance]
+      summary: Read your settlement statement
+      description: Returns the immutable signed line items. Missing and other instructors’ payouts both return 404.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorPayoutDetailData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
   /admin/instructors/{instructorId}/settlement-preview:
     get:
       operationId: previewInstructorSettlement
@@ -2550,6 +2707,29 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
 components:
   parameters:
+    InstructorFinanceCurrency:
+      name: currency
+      in: query
+      schema: { type: string, const: EGP, default: EGP }
+    InstructorFinanceFrom:
+      name: from
+      in: query
+      description: Inclusive UTC start. Supply both bounds or omit both.
+      schema: { type: string, format: date-time, pattern: 'Z$' }
+    InstructorFinanceTo:
+      name: to
+      in: query
+      description: Exclusive UTC end. The interval is at most 366 days and cannot end in the future.
+      schema: { type: string, format: date-time, pattern: 'Z$' }
+    InstructorFinanceLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    InstructorFinanceCursor:
+      name: cursor
+      in: query
+      description: Opaque cursor bound to the authenticated instructor, list and filters.
+      schema: { type: string, maxLength: 1024 }
     PayoutId:
       name: payoutId
       in: path
@@ -2723,6 +2903,130 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    InstructorFinanceId:
+      type: string
+      pattern: '^[a-fA-F0-9]{24}$'
+    InstructorFinanceMinor:
+      type: integer
+      minimum: -9007199254740991
+      maximum: 9007199254740991
+      description: EGP minor units. Signed amounts can represent refunds or debt.
+    InstructorFinanceSummaryData:
+      type: object
+      required: [summary]
+      properties:
+        summary: { $ref: '#/components/schemas/InstructorFinanceSummary' }
+    InstructorFinanceSummary:
+      type: object
+      required: [currency, range, asOf, saleCount, successfulRefundCount, paidPayoutCount, activeHoldCount, hasActiveHolds, grossSalesMinor, successfulRefundsMinor, netSalesMinor, platformCommissionNetMinor, instructorEarnedNetMinor, pendingMinor, pendingSalesMinor, pendingAdjustmentsMinor, eligibleAvailableMinor, negativeCarryMinor, reservedMinor, paidPayoutsMinor, simulatedPaidPayoutsMinor]
+      properties:
+        currency: { const: EGP }
+        range: { type: object, required: [from, to], properties: { from: { type: string, format: date-time }, to: { type: string, format: date-time } } }
+        asOf: { type: string, format: date-time }
+        saleCount: { type: integer, minimum: 0 }
+        successfulRefundCount: { type: integer, minimum: 0 }
+        paidPayoutCount: { type: integer, minimum: 0 }
+        activeHoldCount: { type: integer, minimum: 0 }
+        hasActiveHolds: { type: boolean }
+        grossSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        successfulRefundsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        netSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        platformCommissionNetMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        instructorEarnedNetMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingAdjustmentsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        eligibleAvailableMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        negativeCarryMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        reservedMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        paidPayoutsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        simulatedPaidPayoutsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+    InstructorSalesData:
+      type: object
+      required: [asOf, sales, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        sales: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorSale' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorEarningsData:
+      type: object
+      required: [asOf, earnings, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        earnings: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorEarning' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorPayoutHistoryData:
+      type: object
+      required: [asOf, payouts, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        payouts: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorPayout' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorFinancePagination:
+      type: object
+      required: [hasMore, nextCursor]
+      properties:
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'] }
+    InstructorSale:
+      type: object
+      required: [id, courseId, courseTitle, status, currency, amountMinor, platformCommissionMinor, instructorEarnedMinor, paidAt, paymentConfirmedAt, refund]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        courseId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        courseTitle: { type: string }
+        status: { enum: [paid, refunded] }
+        currency: { const: EGP }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        platformCommissionMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        instructorEarnedMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        paidAt: { type: string, format: date-time }
+        paymentConfirmedAt: { type: [string, 'null'], format: date-time }
+        refund: { type: [object, 'null'], required: [amountMinor, completedAt], properties: { amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }, completedAt: { type: string, format: date-time } } }
+    InstructorEarning:
+      type: object
+      required: [id, orderId, type, status, amountMinor, currency, createdAt, eligibleAt, payout]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        orderId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        type: { enum: [sale, refund_adjustment] }
+        status: { enum: [pending, eligible, included_in_payout, reversed] }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        eligibleAt: { type: [string, 'null'], format: date-time }
+        payout: { type: [object, 'null'], required: [id, status], properties: { id: { $ref: '#/components/schemas/InstructorFinanceId' }, status: { enum: [draft, pending, paid, cancelled] } } }
+    InstructorPayout:
+      type: object
+      required: [id, status, currency, amountMinor, lineCount, periodStart, periodEnd, cutoffAt, createdAt, paidAt, cancelledAt, simulated]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        status: { enum: [draft, pending, paid, cancelled] }
+        currency: { const: EGP }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        lineCount: { type: integer, minimum: 1, maximum: 1000 }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        paidAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+        simulated: { type: boolean }
+    InstructorPayoutDetailData:
+      type: object
+      required: [asOf, payout, items]
+      properties:
+        asOf: { type: string, format: date-time }
+        payout: { $ref: '#/components/schemas/InstructorPayout' }
+        items: { type: array, minItems: 1, maxItems: 1000, items: { $ref: '#/components/schemas/InstructorPayoutItem' } }
+    InstructorPayoutItem:
+      type: object
+      required: [earningEntryId, type, amountMinor, currency]
+      properties:
+        earningEntryId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        type: { enum: [sale, refund_adjustment] }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        currency: { const: EGP }
     PayoutTransferMethod:
       type: string
       enum: [bank_transfer, manual_transfer, test_simulation]

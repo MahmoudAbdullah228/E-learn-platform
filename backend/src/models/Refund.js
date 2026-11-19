@@ -87,4 +87,7 @@ schema.index({ orderId: 1, createdAt: -1, _id: -1 });
 schema.index({ createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, nextRecoveryAt: 1, recoveryLeaseUntil: 1 });
+schema.index({ instructorId: 1, currency: 1, completedAt: 1 }, {
+  partialFilterExpression: { status: 'succeeded', kind: 'full' },
+});
 export const Refund = mongoose.model('Refund', schema);

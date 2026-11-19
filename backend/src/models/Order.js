@@ -52,4 +52,7 @@ schema.index({ studentId: 1, status: 1, createdAt: -1, _id: -1 });
 schema.index({ courseId: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, expiresAt: 1 });
+schema.index({ instructorId: 1, currency: 1, paidAt: -1, _id: -1 }, {
+  partialFilterExpression: { status: { $in: ['paid', 'refunded'] } },
+});
 export const Order = mongoose.model('Order', schema);
