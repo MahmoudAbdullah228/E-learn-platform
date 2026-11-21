@@ -118,7 +118,7 @@ export function createCourseReviewService({ clock = () => new Date() } = {}) {
     },
 
     async getForReview({ courseId }) {
-      const course = await Course.findById(courseId).select(adminCoursePolicyProjection).lean();
+      const course = await Course.findById(courseId).select(adminCoursePolicyProjection).select('+curriculumRevision').lean();
       if (!course) throw notFound();
       const [category, instructor, sections, events] = await Promise.all([
         Category.findById(course.categoryId).lean(),
@@ -138,7 +138,7 @@ export function createCourseReviewService({ clock = () => new Date() } = {}) {
         });
       }
       return {
-        course: { ...toCourse(course, category), ...toCoursePolicy(course) },
+        course: { ...toCourse(course, category), ...toCoursePolicy(course), contentRevision: course.curriculumRevision ?? 0 },
         instructor: instructor ? { id: instructor._id.toString(), name: instructor.name,
           email: instructor.email } : null,
         sections: sections.map(section => ({ id: section._id.toString(), title: section.title,

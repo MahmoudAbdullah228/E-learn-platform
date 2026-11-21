@@ -1,6 +1,6 @@
 # ADR 0007 — Isolated published-course candidates
 
-Date: 2026-11-18. Status: **Accepted design for Sprint 3 implementation**, not implemented.
+Date: 2026-11-18. Status: **Accepted**. Candidate editing and audited admin text corrections are implemented in S3-13. Atomic publication and review belong to S3-14.
 Product decision: P15–P17 in [the policy register](sprint_3_policy_register.md), selected
 under the user's delegation. Sources: MVP post-publish rule, BR01/02/05/06/09/10 and the
 course-review/learning flowchart. Live access must not disappear during candidate review.
@@ -98,3 +98,18 @@ while candidate is pending, copying every large curriculum into an embedded arra
 IDs for unchanged lessons, and deleting media immediately when rejecting a shared candidate.
 The chosen approach adds explicit candidate models and adapter context, but preserves current
 public read contracts and avoids a broad content-storage rewrite in this MVP.
+
+## Candidate implementation evidence
+
+Snapshot creation streams the live curriculum in a snapshot transaction, inserting at most
+100 lesson rows per batch. List responses contain at most 50 children. An integration
+fixture with 205 lessons across two sections verifies exact row count, stable identities,
+paging and a second candidate after discard. This measures the editor path only.
+Before enabling promotion in S3-14, measure the changed-row transaction budget separately
+on the target replica set. No promotion endpoint is enabled by this story.
+
+Version zero is the initial editor version. Each successful write and each material video
+transition advances it once. A snapshot keeps inherited asset references without copying
+live upload attempts. Only a candidate's own attempts and Cloudinary intents are eligible
+for cleanup when it is discarded. The owner and admin credential routes recheck membership,
+session and course access after provider work. Discarded snapshots are read-only history.

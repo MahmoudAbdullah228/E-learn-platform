@@ -11,6 +11,7 @@ import { assertTransactionSupport } from '../src/config/transactions.js';
 import { AdminAuditEvent } from '../src/models/AdminAuditEvent.js';
 import { Category } from '../src/models/Category.js';
 import { Course } from '../src/models/Course.js';
+import { CourseRevision, RevisionLesson, RevisionSection } from '../src/models/CourseRevision.js';
 import { CourseReviewEvent } from '../src/models/CourseReviewEvent.js';
 import { Enrollment } from '../src/models/Enrollment.js';
 import { Lesson } from '../src/models/Lesson.js';
@@ -21,6 +22,8 @@ import { Payment } from '../src/models/Payment.js';
 import { RefreshSession } from '../src/models/RefreshSession.js';
 import { Section } from '../src/models/Section.js';
 import { User } from '../src/models/User.js';
+import { MediaCleanupJob } from '../src/models/MediaCleanupJob.js';
+import { VideoCleanupJob } from '../src/models/VideoCleanupJob.js';
 import { VideoAssetState } from '../src/models/VideoAssetState.js';
 import { VideoPlaybackLease } from '../src/models/VideoPlaybackLease.js';
 import { createCourseAdministrationService } from '../src/modules/courseAdministration/courseAdministration.service.js';
@@ -28,7 +31,7 @@ import { createCheckoutService } from '../src/modules/checkout/checkout.service.
 import { createVideoService } from '../src/modules/video/video.service.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 
-const models = [AdminAuditEvent, VideoPlaybackLease, VideoAssetState, LessonProgress, CourseReviewEvent,
+const models = [MediaCleanupJob, VideoCleanupJob, CourseRevision, RevisionLesson, RevisionSection, AdminAuditEvent, VideoPlaybackLease, VideoAssetState, LessonProgress, CourseReviewEvent,
   Payment, Order, Enrollment, MediaAsset, Lesson, Section, Course, Category, RefreshSession, User];
 const reason = 'Private legal security case reference for administrators';
 let ready = false;
@@ -443,4 +446,136 @@ test('one course policy quota spans archive and access mutations and storage fai
   assert.equal(failure.body.error.code, 'RATE_LIMIT_UNAVAILABLE');
   assert.equal((await Course.findById(f.course.id)).status, 'published');
   assert.equal(await AdminAuditEvent.countDocuments(), 0);
+});
+
+test('published text corrections guard content revision, preserve slug and audit one winning writer', async () => {
+  const f = await fixture();
+  const path = policyPath(f) + '/corrections';
+  const correct = (actor, fields) => request(app).patch(path).auth(actor.token, { type: 'bearer' })
+    .send({ expectedRevision: 0, reason, ...fields });
+  await correct(f.owner, { title: 'Corrected title' }).expect(403);
+  await correct(f.admin, { priceMinor: 0, title: 'Invalid change' }).expect(400);
+  await correct(f.admin, {}).expect(400);
+  const edits = await Promise.all(['Corrected title one', 'Corrected title two']
+    .map(title => correct(f.admin, { title })));
+  assert.deepEqual(edits.map(r => r.status).sort(), [200, 409]);
+  const winner = edits.find(r => r.status === 200).body.data.course;
+  assert.equal(winner.contentRevision, 1);
+  assert.equal(winner.shortDescription, f.course.shortDescription);
+  const stored = await Course.findById(f.course.id).select('+titleSearch');
+  assert.equal(stored.title, winner.title);
+  assert.equal(stored.slug, f.course.slug);
+  assert.equal(stored.titleSearch, winner.title.toLowerCase());
+  assert.equal(await AdminAuditEvent.countDocuments({ action: 'course.corrected', targetId: f.course.id,
+    actorId: f.admin.user.id, reason }), 1);
+  const detail = await read(policyPath(f), f.admin).expect(200);
+  assert.equal(detail.body.data.course.contentRevision, 1);
+});
+
+test('candidate creation, concurrent metadata edits and logical curriculum IDs stay isolated', async () => {
+  const f = await fixture();
+  const root = '/api/v1/instructor/courses/' + f.course.id + '/revisions';
+  const call = (method, path, body, actor = f.owner) => request(app)[method](path)
+    .auth(actor.token, { type: 'bearer' }).send(body);
+  const other = await actor(['student', 'instructor']);
+  await call('post', root, {}, other).expect(404);
+  const created = await Promise.all([call('post', root, {}), call('post', root, {})]);
+  assert.deepEqual(created.map(r => r.status).sort(), [201, 409]);
+  const revisionId = created.find(r => r.status === 201).body.data.id;
+  const path = root + '/' + revisionId;
+  const detail = await read('/api/v1/instructor/courses/' + f.course.id, f.owner).expect(200);
+  assert.equal(detail.body.data.course.activeRevisionId, revisionId);
+  await call('patch', path, { expectedRevision: 0, categoryId: new mongoose.Types.ObjectId().toString() }).expect(400);
+  const edits = await Promise.all([100, 200].map(priceMinor => call('patch', path, { expectedRevision: 0, priceMinor })));
+  assert.deepEqual(edits.map(r => r.status).sort(), [200, 409]);
+  const lessons = path + '/sections/' + f.section.id + '/lessons';
+  const listing = await call('get', lessons).expect(200);
+  assert.equal(listing.body.data.items[0].logicalId, f.lesson.id);
+  await call('patch', path + '/lessons/' + f.lesson.id, { expectedRevision: 1, title: 'New lesson title' }).expect(200);
+  const newLesson = await call('post', lessons, { expectedRevision: 2, title: 'Another lesson' }).expect(201);
+  await call('put', lessons + '/order', { expectedRevision: 3, orderedIds: [newLesson.body.data.logicalId, f.lesson.id] }).expect(200);
+  assert.equal((await call('get', lessons)).body.data.items[0].logicalId, newLesson.body.data.logicalId);
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 1000);
+  assert.equal((await Lesson.findById(f.lesson.id)).title, 'First Lesson');
+  await User.updateOne({ _id: f.owner.user.id }, { status: 'suspended' });
+  await call('patch', path, { expectedRevision: 4, priceMinor: 900 }).expect(401);
+});
+
+test('candidate snapshot preserves all 205 lessons, paginates and discards without deleting shared assets', async () => {
+  const f = await fixture();
+  const second = await Section.create({ courseId: f.course.id, title: 'Second Section', position: 1 });
+  const more = Array.from({ length: 204 }, (_, i) => ({
+    sectionId: i < 199 ? f.section.id : second.id, position: i < 199 ? i + 1 : i - 199, title: 'Lesson ' + i,
+  }));
+  await Lesson.insertMany(more);
+  const root = '/api/v1/instructor/courses/' + f.course.id + '/revisions';
+  const create = () => request(app).post(root).auth(f.owner.token, { type: 'bearer' }).send({});
+  const first = (await create().expect(201)).body.data;
+  assert.equal(await RevisionLesson.countDocuments({ revisionId: first.id }), 205);
+  const path = root + '/' + first.id;
+  const lessons = path + '/sections/' + f.section.id + '/lessons';
+  const page = (await read(lessons, f.owner).expect(200)).body.data;
+  assert.equal(page.items.length, 50);
+  const next = (await read(lessons + '?after=' + page.nextAfter, f.owner).expect(200)).body.data;
+  assert.equal(next.items[0].position, 50);
+  await request(app).post(path + '/discard').auth(f.owner.token, { type: 'bearer' }).send({ expectedRevision: 0 }).expect(200);
+  assert.equal((await MediaAsset.findById(f.asset.id)).status, 'ready');
+  assert.equal((await create().expect(201)).body.data.number, 2);
+});
+
+test('candidate uploads, provider events and review credentials stay scoped to the editor', async () => {
+  const f = await fixture();
+  let passthrough;
+  const mux = { ...videoProvider, async createDirectUpload({ attemptId }) {
+    passthrough = attemptId;
+    return { id: 'upload-candidate', url: 'https://example.test/upload', timeoutSeconds: 600 };
+  } };
+  const images = { ...mediaProvider, createSignedUpload() {
+    return { expiresAt: new Date(Date.now() + 60_000), providerUploadValidUntil: new Date(Date.now() + 600_000) };
+  }, async inspectUpload(asset) {
+    return { public_id: asset.publicId, resource_type: 'raw', type: 'authenticated', bytes: 200, asset_id: 'candidate-pdf' };
+  } };
+  app = newApp({ videoProvider: mux, mediaProvider: images });
+  const owner = (method, path, body) => request(app)[method](path).auth(f.owner.token, { type: 'bearer' }).send(body);
+  const root = '/api/v1/instructor/courses/' + f.course.id + '/revisions';
+  const row = (await owner('post', root, {}).expect(201)).body.data;
+  const path = root + '/' + row.id;
+  const lesson = path + '/lessons/' + f.lesson.id;
+  await read(lesson + '/playback', f.owner).expect(200);
+  await read(lesson + '/playback', f.student).expect(403);
+  await read('/api/v1/admin/course-revisions/' + row.id + '/lessons/' + f.lesson.id + '/playback', f.admin).expect(200);
+  await owner('delete', path + '/media/' + f.asset.id, { expectedRevision: 0 }).expect(200);
+  const intent = (await owner('post', path + '/media/upload-intents', { expectedRevision: 1,
+    purpose: 'lesson_attachment', targetId: f.lesson.id }).expect(201)).body.data;
+  await owner('post', '/api/v1/media/' + intent.assetId + '/confirm', {}).expect(404);
+  await owner('post', path + '/media/' + intent.assetId + '/confirm', { expectedRevision: 2 }).expect(200);
+  await read(lesson + '/attachments/' + intent.assetId + '/download', f.owner).expect(200);
+  await read('/api/v1/lessons/' + f.lesson.id + '/attachments/' + intent.assetId + '/download', f.student).expect(404);
+  await owner('post', lesson + '/video-upload', { expectedRevision: 3 }).expect(201);
+  const video = createVideoService({ videoProvider: { unwrapWebhook: () => ({
+    type: 'video.asset.ready', data: { id: 'candidate-asset', duration: 60, passthrough },
+  }) } });
+  assert.equal((await video.handleWebhook({})).handled, true);
+  assert.equal((await video.handleWebhook({})).handled, true);
+  assert.equal((await RevisionLesson.findOne({ revisionId: row.id }).select('+videoAssetId')).videoAssetId, 'candidate-asset');
+  assert.equal((await Lesson.findById(f.lesson.id).select('+videoAssetId')).videoAssetId, 'policy-video-asset');
+  await owner('post', path + '/discard', { expectedRevision: 5 }).expect(200);
+  assert.equal((await MediaAsset.findById(f.asset.id)).status, 'ready');
+  assert.equal((await MediaAsset.findById(intent.assetId)).status, 'deleting');
+  assert.deepEqual(await VideoCleanupJob.distinct('resourceId'), ['candidate-asset']);
+  await read(lesson + '/playback', f.owner).expect(404);
+});
+
+test('reopen requires a rejected active candidate and the current revision', async () => {
+  const f = await fixture();
+  const root = '/api/v1/instructor/courses/' + f.course.id + '/revisions';
+  const post = (path, data) => request(app).post(path).auth(f.owner.token, { type: 'bearer' }).send(data);
+  const id = (await post(root, {}).expect(201)).body.data.id;
+  const path = root + '/' + id + '/reopen';
+  await post(path, { expectedRevision: 0 }).expect(409);
+  await CourseRevision.updateOne({ _id: id }, { $set: { status: 'rejected', revision: 1 } });
+  await post(path, { expectedRevision: 0 }).expect(409);
+  const result = (await post(path, { expectedRevision: 1 }).expect(200)).body.data;
+  assert.equal(result.status, 'draft');
+  assert.equal(result.revision, 2);
 });

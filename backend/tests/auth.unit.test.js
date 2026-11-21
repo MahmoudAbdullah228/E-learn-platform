@@ -217,6 +217,8 @@ test('limited routes request isolated shared-store instances by limiter namespac
       'admin-write',
       'catalog',
       'instructor-profile',
+      'course-revision-review',
+      'course-revision-editor',
       'course-review',
       'admin-course-policy',
       'admin-course-review',

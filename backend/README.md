@@ -45,6 +45,9 @@ S3-11 adds private instructor sales, earnings, balances and settlement history i
 S3-12 adds the admin dashboard, scoped finance summaries and safe order references in OpenAPI
 **1.9.0**. See [admin finance and refund history](docs/sprint_3_admin_finance.md).
 
+S3-13 adds isolated published-course revision editing and admin text corrections in OpenAPI **1.10.0**.
+See [the frontend handoff](docs/frontend-handoff.md#instructor-revision-editor).
+
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)

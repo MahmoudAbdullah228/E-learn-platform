@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { Category } from '../../models/Category.js';
+import { CourseRevision } from '../../models/CourseRevision.js';
 import { Course } from '../../models/Course.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { createSlug } from '../../utils/slug.js';
@@ -32,7 +33,7 @@ function truncateSlug(value, maximumLength) {
   return characters.join('').replace(/-+$/g, '') || 'course';
 }
 
-async function requireActiveCategory(categoryId, session) {
+export async function requireActiveCategory(categoryId, session) {
   const query = Category.findOne({ _id: categoryId, isActive: true }).lean();
   if (session) query.session(session);
   const category = await query;
@@ -91,7 +92,8 @@ export function createCoursesService({ slugSuffix = () => randomBytes(4).toStrin
       });
       if (!course) throw courseNotFound();
       const category = await Category.findById(course.categoryId).lean();
-      return toCourse(course, category);
+      const active = await CourseRevision.exists({ courseId: course._id, active: true });
+      return { ...toCourse(course, category), activeRevisionId: active ? String(active._id) : null };
     },
 
     async updateCourse({ instructorId, courseId, input }) {

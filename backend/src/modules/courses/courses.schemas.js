@@ -9,7 +9,7 @@ const uniqueTextListSchema = z.array(listItemSchema).max(30).refine(
   { message: 'List items must be unique' },
 );
 
-const courseFields = {
+export const courseFields = {
   title: textSchema({ field: 'Title', minimum: 3, maximum: 160 }),
   categoryId: objectIdSchema,
   description: textSchema({

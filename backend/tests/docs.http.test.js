@@ -22,7 +22,7 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 75);
+  assert.equal(Object.keys(json.body.paths).length, 94);
   for (const path of ['/admin/dashboard', '/admin/finance/summary']) {
     assert.deepEqual(json.body.paths[path]?.get?.security, [{ bearerAuth: [] }]);
   }

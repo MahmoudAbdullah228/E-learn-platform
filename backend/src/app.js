@@ -76,6 +76,7 @@ import { createProgressService } from './modules/progress/progress.service.js';
 import { createProgressRouter } from './modules/progress/progress.routes.js';
 import { createAdminUsersRouter } from './modules/adminUsers/adminUsers.routes.js';
 import { createAdminUsersService } from './modules/adminUsers/adminUsers.service.js';
+import { createCourseRevisionsRouter, createRevisionReviewReadRouter } from './modules/courseRevisions/courseRevisions.routes.js';
 import { createCourseAdministrationRouter } from './modules/courseAdministration/courseAdministration.routes.js';
 import { createCourseAdministrationService } from './modules/courseAdministration/courseAdministration.service.js';
 import { createRefundService } from './modules/refunds/refund.service.js';
@@ -229,6 +230,8 @@ export function createApp({
     instructorsService,
     rateLimitStoreFactory,
   }));
+  application.use('/api/v1/admin/course-revisions', createRevisionReviewReadRouter(learningAccessService, rateLimitStoreFactory));
+  application.use('/api/v1/instructor/courses/:courseId/revisions', createCourseRevisionsRouter({ videoProvider, mediaProvider, learningAccessService, rateLimitStoreFactory }));
   application.use('/api/v1/instructor/courses', createCoursesRouter({ coursesService }));
   application.use('/api/v1/instructor/courses', createInstructorCourseReviewRouter({
     reviewService: courseReviewService, rateLimitStoreFactory,

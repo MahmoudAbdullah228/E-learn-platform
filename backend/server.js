@@ -4,6 +4,7 @@ import { env } from './src/config/env.js';
 import { assertTransactionSupport } from './src/config/transactions.js';
 import { InstructorApplication } from './src/models/InstructorApplication.js';
 import { Course } from './src/models/Course.js';
+import { CourseRevision, RevisionLesson, RevisionSection } from './src/models/CourseRevision.js';
 import { CourseReviewEvent } from './src/models/CourseReviewEvent.js';
 import { Section } from './src/models/Section.js';
 import { Lesson } from './src/models/Lesson.js';
@@ -42,7 +43,7 @@ async function startServer() {
       await assertTransactionSupport();
       await Promise.all([
         InstructorApplication.init(), Course.init(), CourseReviewEvent.init(),
-        Section.init(), Lesson.init(),
+        Section.init(), Lesson.init(), CourseRevision.init(), RevisionSection.init(), RevisionLesson.init(),
         VideoCleanupJob.init(), VideoAssetState.init(), VideoPlaybackLease.init(),
         MediaAsset.init(), MediaCleanupJob.init(),
         Order.init(), Payment.init(), Enrollment.init(), LessonProgress.init(), EarningEntry.init(), WebhookEvent.init(),

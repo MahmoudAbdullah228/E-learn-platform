@@ -67,6 +67,7 @@ const courseSchema = new mongoose.Schema(
     coverAssetId: { type: mongoose.Schema.Types.ObjectId, ref: 'MediaAsset', default: null },
     // Every curriculum mutation writes this document to serialize concurrent transactions.
     curriculumRevision: { type: Number, default: 0, select: false },
+    candidateWriteRevision: { type: Number, default: 0, select: false },
     checkoutRevision: { type: Number, default: 0, select: false },
     learningRevision: { type: Number, default: 0, select: false },
     submittedContentRevision: {

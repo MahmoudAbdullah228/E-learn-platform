@@ -6,7 +6,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { adminActorSchema } from '../../utils/actorSchemas.js';
 import { appendAuditEvent } from '../audit/audit.service.js';
 import { financialIdSchema } from '../finance/finance.schemas.js';
-import { archiveCourseInputSchema, courseAccessInputSchema } from './courseAdministration.schemas.js';
+import { correctionInputSchema, archiveCourseInputSchema, courseAccessInputSchema } from './courseAdministration.schemas.js';
 import { adminCoursePolicyProjection, toCoursePolicy } from './courseAdministration.presenter.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' }, maxCommitTimeMS: 10_000 };
@@ -52,5 +52,30 @@ export function createCourseAdministrationService({ clock = () => new Date() } =
       return { course: toCoursePolicy(updated), changed: true };
     }, transactionOptions);
   }
-  return Object.freeze({ archive: input => mutate(input, true), changeAccess: input => mutate(input, false) });
+  async function correct({ auth, courseId, input, requestId }) {
+    auth = adminActorSchema.parse(auth);
+    courseId = financialIdSchema.parse(courseId);
+    const { reason, expectedRevision, ...fields } = correctionInputSchema.parse(input);
+    return mongoose.connection.transaction(async session => {
+      const now = clock();
+      await fenceActiveAdmin({ auth, session, now });
+      const course = await Course.findById(courseId).select('+curriculumRevision').session(session);
+      if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
+      if (course.status !== 'published') throw new ApiError(409, 'INVALID_COURSE_STATE',
+        'Only published courses accept text corrections');
+      if (course.curriculumRevision !== expectedRevision || expectedRevision >= Number.MAX_SAFE_INTEGER) {
+        throw new ApiError(409, 'STATE_CONFLICT', 'Reload the current content revision');
+      }
+      if (Object.entries(fields).some(([key, value]) => course[key] !== value)) {
+        course.set(fields);
+        course.curriculumRevision += 1;
+        await course.save({ session, validateModifiedOnly: true });
+        await appendAuditEvent({ session, occurredAt: now, input: { actorType: 'user', actorId: auth.userId,
+          action: 'course.corrected', targetType: 'course', targetId: courseId, reason, requestId } });
+      }
+      return { id: course.id, title: course.title, shortDescription: course.shortDescription,
+        contentRevision: course.curriculumRevision };
+    }, transactionOptions);
+  }
+  return Object.freeze({ correct, archive: input => mutate(input, true), changeAccess: input => mutate(input, false) });
 }

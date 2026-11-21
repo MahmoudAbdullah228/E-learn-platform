@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.9.0
+  version: 1.10.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -38,6 +38,7 @@ info:
     S3-10 seals payout drafts and records externally verified settlement outcomes.
     S3-11 adds instructor-owned sales, earnings, balances and payout statements.
     S3-12 adds admin metrics, instructor earnings filters and administrator-only order references.
+    S3-13 adds isolated published-course revision editing, private review media and audited text corrections.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -686,6 +687,699 @@ paths:
         '429': { $ref: '#/components/responses/RateLimitError' }
         '500': { $ref: '#/components/responses/InternalServerError' }
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions:
+    post:
+      operationId: createCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '201':
+          description: createCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}:
+    get:
+      operationId: getCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    patch:
+      operationId: editCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionMetadataPatch' }
+      responses:
+        '200':
+          description: editCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/reopen:
+    post:
+      operationId: reopenRejectedCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: reopenRejectedCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/discard:
+    post:
+      operationId: discardCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: discardCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections:
+    get:
+      operationId: listRevisionSections
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
+      responses:
+        '200':
+          description: listRevisionSections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    post:
+      operationId: createRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionSectionInput' }
+      responses:
+        '201':
+          description: createRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/order:
+    put:
+      operationId: orderRevisionSections
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionOrderInput' }
+      responses:
+        '200':
+          description: orderRevisionSections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}:
+    patch:
+      operationId: editRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionSectionInput' }
+      responses:
+        '200':
+          description: editRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    delete:
+      operationId: deleteRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: deleteRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons:
+    get:
+      operationId: listRevisionLessons
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
+      responses:
+        '200':
+          description: listRevisionLessons
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    post:
+      operationId: createRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionLessonInput' }
+      responses:
+        '201':
+          description: createRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons/order:
+    put:
+      operationId: orderRevisionLessons
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionOrderInput' }
+      responses:
+        '200':
+          description: orderRevisionLessons
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}:
+    patch:
+      operationId: editRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionLessonPatch' }
+      responses:
+        '200':
+          description: editRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    delete:
+      operationId: deleteRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: deleteRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/upload-intents:
+    post:
+      operationId: issueRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionIntentInput' }
+      responses:
+        '201':
+          description: issueRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionIntent' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}/confirm:
+    post:
+      operationId: confirmRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: confirmRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionConfirmedAsset' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}:
+    delete:
+      operationId: detachRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: detachRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/video-upload:
+    post:
+      operationId: uploadRevisionVideo
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '201':
+          description: uploadRevisionVideo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionUpload' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/playback:
+    get:
+      operationId: getOwnerRevisionPlayback
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getOwnerRevisionPlayback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
+    get:
+      operationId: getOwnerRevisionDownload
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getOwnerRevisionDownload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}/lessons/{lessonId}/playback:
+    get:
+      operationId: getAdminRevisionPlayback
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getAdminRevisionPlayback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
+    get:
+      operationId: getAdminRevisionDownload
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getAdminRevisionDownload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/courses/{courseId}/corrections:
+    patch:
+      operationId: correctPublishedCourse
+      tags: [Course administration]
+      summary: Correct published course display text
+      description: Use contentRevision from the admin course detail. A changed value increments the content revision and records the admin and reason atomically.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, reason]
+              anyOf: [{ required: [title] }, { required: [shortDescription] }]
+              properties:
+                expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+                title: { type: string, minLength: 3, maxLength: 160 }
+                shortDescription: { anyOf: [{ const: '' }, { type: string, minLength: 10, maxLength: 300 }] }
+      responses:
+        '200':
+          description: Corrected display text and current content revision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [course]
+                    properties:
+                      course:
+                        type: object
+                        required: [id, title, shortDescription, contentRevision]
+                        properties:
+                          id: { type: string }
+                          title: { type: string }
+                          shortDescription: { type: string }
+                          contentRevision: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { description: Stale content revision or course is no longer published }
+        '429': { description: Admin write limit exceeded }
   /admin/courses/{courseId}/archive:
     post:
       operationId: archiveCourse
@@ -3331,6 +4025,117 @@ components:
         accessStatus: { type: string, enum: [available, blocked] }
         reason: { type: string, minLength: 10, maxLength: 500 }
         expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    CourseRevision:
+      type: object
+      required: [id, courseId, number, status, revision, baseContentRevision, metadata]
+      properties:
+        id: { type: string }
+        courseId: { type: string }
+        number: { type: integer, minimum: 1 }
+        status: { enum: [draft, pending_review, approved, rejected, discarded] }
+        revision: { type: integer, minimum: 0 }
+        baseContentRevision: { type: integer, minimum: 0 }
+        metadata:
+          allOf: [{ $ref: '#/components/schemas/CourseInputFields' }]
+          properties:
+            coverAssetId: { type: [string, 'null'] }
+        logicalId: { type: string, description: Present when a child was created }
+    RevisionIntentInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [purpose, targetId]
+      properties:
+        purpose: { enum: [course_cover, lesson_attachment] }
+        targetId: { type: string, description: Course ID for covers or logical lesson ID for attachments, pattern: '^[a-fA-F0-9]{24}$' }
+      unevaluatedProperties: false
+    RevisionConfirmedAsset:
+      allOf: [{ $ref: '#/components/schemas/CourseRevision' }]
+      required: [assetId]
+      properties:
+        assetId: { type: string }
+    RevisionIntent:
+      allOf: [{ $ref: '#/components/schemas/RevisionConfirmedAsset' }]
+      required: [upload, maxBytes]
+      properties:
+        maxBytes: { type: integer }
+        upload:
+          type: object
+          required: [uploadUrl, apiKey, signature, parameters, resourceType, deliveryType, expiresAt, providerUploadValidUntil]
+          properties:
+            uploadUrl: { type: string, format: uri }
+            apiKey: { type: string }
+            signature: { type: string }
+            parameters: { type: object, additionalProperties: true }
+            resourceType: { type: string }
+            deliveryType: { type: string }
+            expiresAt: { type: string, format: date-time }
+            providerUploadValidUntil: { type: string, format: date-time }
+    RevisionUpload:
+      allOf: [{ $ref: '#/components/schemas/CourseRevision' }]
+      required: [upload]
+      properties:
+        upload:
+          type: object
+          required: [id, url, timeoutSeconds]
+          properties:
+            id: { type: string }
+            url: { type: string, format: uri }
+            timeoutSeconds: { type: integer }
+    RevisionPage:
+      type: object
+      required: [revision, items, nextAfter]
+      properties:
+        revision: { type: integer }
+        nextAfter: { type: [integer, 'null'] }
+        items:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [logicalId, position, title]
+            properties:
+              logicalId: { type: string }
+              position: { type: integer }
+              title: { type: string }
+              description: { type: string }
+              videoStatus: { type: string }
+              attachments: { type: array, items: { type: string } }
+              durationSeconds: { type: integer }
+              isPreview: { type: boolean }
+    RevisionGuardFields:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    RevisionGuard:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      unevaluatedProperties: false
+    RevisionMetadataPatch:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }, { $ref: '#/components/schemas/CourseInputFields' }]
+      minProperties: 2
+      unevaluatedProperties: false
+    RevisionOrderInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [orderedIds]
+      properties:
+        orderedIds: { type: array, maxItems: 200, uniqueItems: true, items: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      unevaluatedProperties: false
+    RevisionSectionInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [title]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+      unevaluatedProperties: false
+    RevisionLessonPatch:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      minProperties: 2
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+        description: { type: string, maxLength: 10000 }
+        isPreview: { type: boolean }
+      unevaluatedProperties: false
+    RevisionLessonInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionLessonPatch' }]
+      required: [title]
     CoursePolicyFields:
       type: object
       required: [id, status, accessStatus, revision, archivedAt, unavailableAt, archivedBy, archiveReason, accessChangedAt, accessChangedBy, accessReason]
@@ -3350,6 +4155,8 @@ components:
       allOf: [{ $ref: '#/components/schemas/CoursePolicyFields' }]
       unevaluatedProperties: false
     AdminCourse:
+      properties:
+        contentRevision: { type: integer, minimum: 0 }
       allOf:
         - { $ref: '#/components/schemas/CourseFields' }
         - { $ref: '#/components/schemas/CoursePolicyFields' }
@@ -4616,6 +5423,9 @@ components:
         - createdAt
         - updatedAt
       properties:
+        activeRevisionId:
+          type: [string, 'null']
+          description: Included in the instructor course detail to resume the active revision.
         id:
           type: string
           pattern: '^[a-fA-F0-9]{24}$'

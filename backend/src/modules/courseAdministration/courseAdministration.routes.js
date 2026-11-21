@@ -6,7 +6,7 @@ import { noStore } from '../../middlewares/noStore.js';
 import { createAuthenticatedRateLimiter } from '../../middlewares/rateLimiter.js';
 import { validateBody, validateParams, validateQuery } from '../../middlewares/validate.js';
 import { createCourseAdministrationController } from './courseAdministration.controller.js';
-import { archiveCourseInputSchema, courseAccessInputSchema, courseAdministrationParamsSchema,
+import { correctionInputSchema, archiveCourseInputSchema, courseAccessInputSchema, courseAdministrationParamsSchema,
   emptyCoursePolicyQuerySchema } from './courseAdministration.schemas.js';
 
 export function createCourseAdministrationRouter({ service, rateLimitStoreFactory }) {
@@ -20,5 +20,6 @@ export function createCourseAdministrationRouter({ service, rateLimitStoreFactor
     validateParams(courseAdministrationParamsSchema), validateQuery(emptyCoursePolicyQuerySchema)];
   router.post('/:courseId/archive', ...guards, validateBody(archiveCourseInputSchema), controller.archive);
   router.patch('/:courseId/access-policy', ...guards, validateBody(courseAccessInputSchema), controller.changeAccess);
+  router.patch('/:courseId/corrections', ...guards, validateBody(correctionInputSchema), controller.correct);
   return router;
 }

@@ -1,5 +1,7 @@
 # Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
 
+OpenAPI **1.10.0** adds the [instructor revision editor](#instructor-revision-editor) and [admin text corrections](#published-course-text-corrections).
+
 S3-12 adds `GET /admin/dashboard` and `GET /admin/finance/summary` in OpenAPI **1.9.0**.
 Use the latter with `instructorId` for one account. The dashboard reports current user
 and course counts alongside financial activity in the selected UTC range. Admin order
@@ -510,3 +512,28 @@ Use `credentials: 'include'` for login, refresh, and logout. Registration and em
 Login, refresh, and logout require a trusted `Origin`, falling back to `Referer` only when Origin is absent. Browsers send these headers automatically; CLI/Postman clients must supply an allowed Origin. Add the backend Swagger origin to `CORS_ORIGINS` to test locally. Cookies use SameSite=Lax, so frontend and API must be on the same site for browser refresh requests.
 
 Coordinate refresh requests through one shared promise (and across browser tabs). Reusing the same refresh cookie concurrently is treated as replay and revokes that device's family, including its access tokens. Logout also invalidates that device's access tokens immediately for subsequent requests; other devices remain signed in. Logout-all invalidates credentials issued under older user versions; a new login after that version change remains valid.
+
+### Published course text corrections
+
+Read `data.course.contentRevision` from `GET /admin/courses/{courseId}`. Send it as
+`expectedRevision` to `PATCH /admin/courses/{courseId}/corrections` with a reason
+(10–500 characters) and a title, shortDescription, or both. Use the returned
+`data.course.contentRevision` for the next edit. On 409 reload the detail before retrying.
+The archive/access-policy revision is independent.
+
+### Instructor revision editor
+
+Read `data.course.activeRevisionId` on the instructor course detail to resume an existing candidate.
+Create a candidate with `POST /instructor/courses/{courseId}/revisions`. The returned
+`data.id` identifies the candidate. PATCH its metadata, edit sections/lessons or
+POST to its discard endpoint using `data.revision` as `expectedRevision`. All editor
+paths are relative to the candidate URL. Use the logical IDs returned by the section
+and lesson lists. Follow `nextAfter` with `?after=` until it is null. On a revision
+conflict reload the candidate and the affected list. Changes are visible to the owner
+through the revision editor. To resume editing a rejected candidate, POST its current expectedRevision to the reopen endpoint. The public catalog continues serving the published course.
+
+Use the candidate-scoped media endpoints from OpenAPI for cover/PDF intents, confirmation,
+detachment and video uploads. On confirmation or video readiness refresh the revision number.
+The private playback and attachment download routes exist for both the owner and admin.
+After discard, review credentials are unavailable. Public previews and student downloads
+continue to use the published lesson endpoints.
