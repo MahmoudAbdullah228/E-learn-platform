@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { protectSnapshot } from './protectSnapshot.js';
+import { protectWriteOnce } from './protectFinancialHistory.js';
 
 const checkoutRequest = new mongoose.Schema({
   orderId: { type: String, required: true },
@@ -26,12 +27,16 @@ const schema = new mongoose.Schema({
   status: { type: String, enum: ['created', 'processing', 'succeeded', 'failed', 'refunded'],
     default: 'created', required: true },
   paidAt: { type: Date, default: null },
+  paymentConfirmedAt: { type: Date, default: null },
+  providerRefundedAmountMinor: { type: Number, default: null, min: 0, max: Number.MAX_SAFE_INTEGER,
+    select: false, validate: value => value == null || Number.isSafeInteger(value) },
   checkoutRequest: { type: checkoutRequest, required: true, immutable: true, select: false },
   checkoutLeaseId: { type: String, default: null, select: false },
   checkoutLeaseUntil: { type: Date, default: null, select: false },
 }, { timestamps: true });
 protectSnapshot(schema, ['orderId', 'provider', 'idempotencyKey', 'amountMinor', 'currency',
   'checkoutRequest']);
+protectWriteOnce(schema, ['paymentConfirmedAt']);
 schema.pre('validate', function validateCheckoutSnapshot() {
   if (!this.isNew && !this.isModified('checkoutRequest')) return;
   const snapshot = this.checkoutRequest;

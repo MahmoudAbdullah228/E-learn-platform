@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: E-Learning Marketplace API
-  version: 1.0.0
+  version: 1.11.0
   description: |
     Stories 1.1 through 2.4: foundation, registration/email verification,
     session management, secure password reset, basic user profiles, and
@@ -20,7 +20,26 @@ info:
     S2-09 adds free enrollment, the owner's library/learning outline, owner-only order polling,
     and admin order reads. S2-10 adds authorized signed video playback and temporary private PDF downloads.
     S2-11 adds enrollment-bound lesson completion/resume and dynamic progress reads.
-    Refunds and payouts remain later stories.
+    S3-03 adds admin-only user search/detail and transactional suspension/reactivation,
+    audited with current session checks and protection against losing usable administrators.
+    S3-04 adds audited course archive and independent legal/security access policy.
+    Archived courses retain active learner access but reject discovery, preview and new enrollment.
+    Access blocks deny new credentials for learners and reviewers alike; unblock never republishes.
+    S3-05 adds durable admin full-refund request/read contracts and a tested Stripe adapter.
+    S3-06 adds signed refund/charge/dispute events, atomic full-refund accounting/access,
+    bounded read-only recovery, and policy/confirmation snapshots on new paid purchases.
+    REFUND_PROCESSING_ENABLED defaults to false; explicit operator activation and reviewed policy are required.
+    Legacy orders without frozen policy/trusted confirmation are never guessed from paidAt.
+    S3-07 adds source-fenced paid repurchase and now-free reactivation after a confirmed full refund,
+    retaining the enrollment/progress identity and recomputing progress against current lessons.
+    Owner order reads include the latest safe refund summary; library reads distinguish refunded access.
+    S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
+    S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
+    S3-10 seals payout drafts and records externally verified settlement outcomes.
+    S3-11 adds instructor-owned sales, earnings, balances and payout statements.
+    S3-12 adds admin metrics, instructor earnings filters and administrator-only order references.
+    S3-13 adds isolated published-course revision editing, private review media and audited text corrections.
+    S3-14 adds candidate submission, admin comparison, rejection and atomic publication.
     Register with a mailbox you control, copy the token from the verification email,
     then POST it to /auth/verify-email. Tokens expire after 24 hours.
     Resend returns 202 when the request is queued, not when email arrives.
@@ -35,12 +54,24 @@ servers:
   - url: /api/v1
     description: API on the same host as this documentation
 tags:
+  - name: Admin finance
+    description: Marketplace metrics, financial totals and instructor earnings for administrators
+  - name: Instructor finance
+    description: Private instructor financial reports and historical statements
+  - name: Payouts
+    description: Admin settlement previews, drafts and manual transfer reconciliation
   - name: Health
     description: Process health
   - name: Auth
     description: Registration, email verification, session management, and password reset
   - name: Users
     description: Authenticated user profile
+  - name: Admin users
+    description: Administrative user directory and audited account status decisions
+  - name: Course administration
+    description: Audited course archive and legal/security access policy
+  - name: Refunds
+    description: Durable full-refund reservations, safe reads and asynchronous provider-confirmed accounting; opt-in Test Mode issuance
   - name: Instructor applications
     description: Student applications and administrative review
   - name: Instructors
@@ -70,13 +101,1675 @@ tags:
   - name: Categories
     description: Public category discovery and administrative category management
 paths:
+  /admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      tags: [Admin finance]
+      summary: Read current marketplace counts and financial activity
+      description: Counts and balances are current. The range filters recorded sales, full refunds and paid settlements.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+      responses:
+        '200':
+          description: Administrator financial snapshot
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/AdminDashboardData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/finance/summary:
+    get:
+      operationId: getAdminFinanceSummary
+      tags: [Admin finance]
+      summary: Read marketplace or instructor financial totals
+      description: Optional instructorId scopes totals to an existing account, including suspended and former instructors.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { name: instructorId, in: query, schema: { $ref: '#/components/schemas/InstructorFinanceId' } }
+      responses:
+        '200':
+          description: Administrator financial snapshot
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/AdminFinanceSummaryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/finance/summary:
+    get:
+      operationId: getInstructorFinanceSummary
+      tags: [Instructor finance]
+      summary: Read sales activity and current balances
+      description: Range applies to sale paidAt, confirmed full refund completedAt and payout paidAt. Default is the last 30 days. Current balances and holds are independent of the range.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorFinanceSummaryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/sales:
+    get:
+      operationId: listInstructorSales
+      tags: [Instructor finance]
+      summary: List your recorded course sales
+      description: Filters and sorts by paidAt. Refund details reflect the current snapshot and can fall outside the sale date range.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [paid, refunded] } }
+        - { name: courseId, in: query, schema: { $ref: '#/components/schemas/InstructorFinanceId' } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorSalesData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/earnings:
+    get:
+      operationId: listInstructorEarnings
+      tags: [Instructor finance]
+      summary: List your signed earning entries
+      description: Filters by createdAt. Includes reversed entries. An included entry identifies its current payout status.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [pending, eligible, included_in_payout, reversed] } }
+        - { name: type, in: query, schema: { enum: [sale, refund_adjustment] } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorEarningsData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/payouts:
+    get:
+      operationId: listInstructorPayouts
+      tags: [Instructor finance]
+      summary: List your settlement history
+      description: Filters by createdAt. Includes draft, pending, paid and cancelled settlements.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InstructorFinanceCurrency' }
+        - { $ref: '#/components/parameters/InstructorFinanceFrom' }
+        - { $ref: '#/components/parameters/InstructorFinanceTo' }
+        - { $ref: '#/components/parameters/InstructorFinanceLimit' }
+        - { $ref: '#/components/parameters/InstructorFinanceCursor' }
+        - { name: status, in: query, schema: { enum: [draft, pending, paid, cancelled] } }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorPayoutHistoryData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/payouts/{payoutId}:
+    get:
+      operationId: getInstructorPayout
+      tags: [Instructor finance]
+      summary: Read your settlement statement
+      description: Returns the immutable signed line items. Missing and other instructors’ payouts both return 404.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+      responses:
+        '200':
+          description: Owner scoped financial data
+          headers:
+            Cache-Control: { schema: { const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/InstructorPayoutDetailData' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/instructors/{instructorId}/settlement-preview:
+    get:
+      operationId: previewInstructorSettlement
+      tags: [Payouts]
+      summary: Inspect the current signed balance for a Cairo settlement month
+      description: Preview is read-only. Include earlier unsettled sales through cutoff and all known eligible debt. Review blocked and reasonCodes before requesting a draft.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: instructorId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: month, in: query, required: true, schema: { $ref: '#/components/schemas/PayoutMonth' } }
+        - { name: cutoffAt, in: query, required: true, schema: { $ref: '#/components/schemas/PayoutCutoff' } }
+      responses:
+        '200':
+          description: Snapshot preview
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [preview]
+                    properties:
+                      preview: { $ref: '#/components/schemas/SettlementPreview' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts:
+    post:
+      operationId: createPayoutDraft
+      tags: [Payouts]
+      summary: Create a draft and atomically reserve the complete selected balance
+      description: Recomputes the signed balance under the instructor finance guard. Active payouts, holds, non-positive balances and capacity violations return 409. The actor-scoped key replays the original draft receipt with 200. Use GET for current state.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [instructorId, month, cutoffAt]
+              properties:
+                instructorId: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+                month: { $ref: '#/components/schemas/PayoutMonth' }
+                cutoffAt: { $ref: '#/components/schemas/PayoutCutoff' }
+      responses:
+        '201': { $ref: '#/components/responses/PayoutDraftReceipt' }
+        '200': { $ref: '#/components/responses/PayoutDraftReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    get:
+      operationId: listPayouts
+      tags: [Payouts]
+      summary: List payouts and current instructor hold flags
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: instructorId, in: query, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, pending, paid, cancelled] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 } }
+      responses:
+        '200':
+          description: Payouts sorted newest first with a filter-bound opaque cursor
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [payouts, pagination]
+                    properties:
+                      payouts: { type: array, items: { $ref: '#/components/schemas/PayoutRecord' } }
+                      pagination:
+                        type: object
+                        required: [hasMore, nextCursor]
+                        properties:
+                          hasMore: { type: boolean }
+                          nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}:
+    get:
+      operationId: getPayout
+      tags: [Payouts]
+      summary: Read a payout and its immutable signed line items
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: payoutId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: Payout detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [payout, items]
+                    properties:
+                      payout: { $ref: '#/components/schemas/PayoutRecord' }
+                      items:
+                        type: array
+                        maxItems: 1000
+                        items:
+                          type: object
+                          required: [earningEntryId, currency, amountMinor, type]
+                          properties:
+                            earningEntryId: { type: string }
+                            currency: { const: EGP }
+                            amountMinor: { type: integer }
+                            type: { enum: [sale, refund_adjustment] }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/submit:
+    post:
+      operationId: submitPayout
+      tags: [Payouts]
+      summary: Seal a payout and allocate a transfer attempt
+      description: Revalidates the reserved statement and holds. Returns a pending receipt. Fetch current payout details for the attempt ID. The API does not send funds.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutSubmit' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/mark-paid:
+    post:
+      operationId: markPayoutPaid
+      tags: [Payouts]
+      summary: Record a confirmed external transfer
+      description: Matches the sealed attempt, transfer method and exact amount. Records the normalized, globally unique reference. Paid is final.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutPaidEvidence' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/cancel:
+    post:
+      operationId: cancelPayout
+      tags: [Payouts]
+      summary: Cancel a draft or confirm a sealed transfer was not sent
+      description: A draft requires a reason. A pending payout requires the matching attempt, method and a reference to authoritative evidence that no transfer occurred. Unknown transfers remain reserved.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutCancel' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/payouts/{payoutId}/reconcile:
+    post:
+      operationId: reconcilePayout
+      tags: [Payouts]
+      summary: Record the result of investigating a sealed transfer
+      description: An unknown result keeps the payout pending. Confirmed results require evidence and finalize matching refund dependencies in the same transaction.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/PayoutId' }
+        - { $ref: '#/components/parameters/PayoutCommandKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutReconcile' }
+      responses:
+        '200': { $ref: '#/components/responses/PayoutCommandReceipt' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/orders/{orderId}/refunds:
+    post:
+      operationId: requestFullRefund
+      tags: [Refunds]
+      summary: Reserve an audited full refund with a stable accepted receipt
+      description: |
+        Requires a current verified active admin, rechecked inside the financial transaction.
+        The default application Stripe provider returns 503 REFUND_PROCESSING_NOT_ENABLED
+        while REFUND_PROCESSING_ENABLED=false (default). Activation is an operator decision,
+        requires complete Stripe Test Mode configuration and a reviewed frozen policy;
+        no client bypass. No query parameters or client monetary/provider fields.
+        Idempotency-Key is required (16-128 ASCII letters/digits/dot/underscore/hyphen),
+        scoped to actor/refund-create. Same key and normalized order/reason/override returns
+        the original 202 requested receipt, even if current state changed. Changed intent
+        is 409 IDEMPOTENCY_CONFLICT; never change the key to retry an uncertain outcome.
+        Amount/EGP/payment identity and frozen policy come from immutable server records.
+        Requires paid/succeeded matching payment, policy-bound sale, trusted matching payment
+        confirmation and derived deadline. Missing legacy mapping is not inferred from paidAt.
+        At or after deadline, explicit overrideWindow true needs a policy allowing the exception;
+        it overrides time only. Unsupported partial/dispute/legacy holds require review.
+        Reservation, scoped financial hold and audit commit before any provider call. A bounded
+        single issuance attempt uses a separate stored server key; pending/unknown results
+        retain the hold. HTTP 202 means durable acceptance, never money returned. Even provider
+        success waits for authenticated current provider evidence and the atomic financial/access reducer.
+        Full success marks Order/Payment refunded, releases the purchase slot, revokes only
+        the matching active enrollment, and reverses the sale or records settlement debt.
+        External partial refunds/disputes retain review holds without asserting a full refund.
+        Repurchase uses the normal Checkout/free-enrollment routes after confirmed full-refund proof.
+        A released slot alone does not reactivate access; independent revocations are never bypassed.
+        There is no refund retry/cancel/complete endpoint here. All outcomes are no-store.
+        Per-user write quota uses ADMIN_WRITE_RATE_LIMIT settings (default 30/minute).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderId' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRefundInput' }
+            example: { reason: Customer refund following a documented administrative review, overrideWindow: false }
+      responses:
+        '202':
+          description: Original durable accepted receipt, including an identical replay
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundAcceptedResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: IDEMPOTENCY_CONFLICT, REFUND_NOT_ALLOWED, REFUND_IN_PROGRESS, REFUND_ALREADY_COMPLETED, REFUND_WINDOW_EXPIRED, REFUND_OVERRIDE_NOT_ALLOWED, or FINANCIAL_RECONCILIATION_REQUIRED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: REFUND_PROCESSING_NOT_ENABLED, REFUND_PROVIDER_UNAVAILABLE, REFUND_SERVICE_UNAVAILABLE, RATE_LIMIT_UNAVAILABLE or SERVICE_SHUTTING_DOWN before durable acceptance
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/refunds:
+    get:
+      operationId: listAdminRefunds
+      tags: [Refunds]
+      summary: List persisted refund states as administrator
+      description: |
+        Current verified active admin session. No provider call or financial mutation.
+        Sort createdAt/id descending, limit+1 cursor pagination. Keep status/orderId filters
+        unchanged when reusing the signed opaque cursor. Lists are live, not a frozen export.
+        No provider IDs/keys, raw evidence, reasons, actors or lease fields are returned.
+        pending includes provider evidence awaiting atomic S3-06 finalization. All outcomes
+        are no-store. GET list/detail share a per-user PRIVATE_READ_RATE_LIMIT quota.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        - name: orderId
+          in: query
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Safe current refund state page
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/refunds/{refundId}:
+    get:
+      operationId: getAdminRefund
+      tags: [Refunds]
+      summary: Read one safe current refund state
+      description: Current verified active admin session, no query parameters, no-store, shared refund read quota. Does not contact Stripe or finalize a refund.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: refundId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+      responses:
+        '200':
+          description: Safe persisted refund state
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefundResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions:
+    post:
+      operationId: createCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '201':
+          description: createCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}:
+    get:
+      operationId: getCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    patch:
+      operationId: editCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionMetadataPatch' }
+      responses:
+        '200':
+          description: editCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/submit:
+    post:
+      operationId: submitCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: submitCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}:
+    get:
+      operationId: getRevisionReviewDetail
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: Authorized admin review data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionReviewDetail' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /admin/course-revisions:
+    get:
+      operationId: listPendingCourseRevisions
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: after, in: query, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: Authorized admin review data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/PendingRevisions' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+  /admin/course-revisions/{revisionId}/approve:
+    post:
+      operationId: approveCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionDecision' }
+      responses:
+        '200':
+          description: approveCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}/reject:
+    post:
+      operationId: rejectCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRevision' }
+      responses:
+        '200':
+          description: rejectCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/reopen:
+    post:
+      operationId: reopenRejectedCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: reopenRejectedCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/discard:
+    post:
+      operationId: discardCourseRevision
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: discardCourseRevision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections:
+    get:
+      operationId: listRevisionSections
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
+      responses:
+        '200':
+          description: listRevisionSections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    post:
+      operationId: createRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionSectionInput' }
+      responses:
+        '201':
+          description: createRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/order:
+    put:
+      operationId: orderRevisionSections
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionOrderInput' }
+      responses:
+        '200':
+          description: orderRevisionSections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}:
+    patch:
+      operationId: editRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionSectionInput' }
+      responses:
+        '200':
+          description: editRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    delete:
+      operationId: deleteRevisionSection
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: deleteRevisionSection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons:
+    get:
+      operationId: listRevisionLessons
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
+      responses:
+        '200':
+          description: listRevisionLessons
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionPage' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    post:
+      operationId: createRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionLessonInput' }
+      responses:
+        '201':
+          description: createRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons/order:
+    put:
+      operationId: orderRevisionLessons
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: sectionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionOrderInput' }
+      responses:
+        '200':
+          description: orderRevisionLessons
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}:
+    patch:
+      operationId: editRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionLessonPatch' }
+      responses:
+        '200':
+          description: editRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+    delete:
+      operationId: deleteRevisionLesson
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: deleteRevisionLesson
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/upload-intents:
+    post:
+      operationId: issueRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionIntentInput' }
+      responses:
+        '201':
+          description: issueRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionIntent' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}/confirm:
+    post:
+      operationId: confirmRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: confirmRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionConfirmedAsset' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}:
+    delete:
+      operationId: detachRevisionMedia
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '200':
+          description: detachRevisionMedia
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/CourseRevision' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/video-upload:
+    post:
+      operationId: uploadRevisionVideo
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevisionGuard' }
+      responses:
+        '201':
+          description: uploadRevisionVideo
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/RevisionUpload' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/playback:
+    get:
+      operationId: getOwnerRevisionPlayback
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getOwnerRevisionPlayback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
+    get:
+      operationId: getOwnerRevisionDownload
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getOwnerRevisionDownload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}/lessons/{lessonId}/playback:
+    get:
+      operationId: getAdminRevisionPlayback
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getAdminRevisionPlayback
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlaybackResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/course-revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
+    get:
+      operationId: getAdminRevisionDownload
+      tags: [Course revisions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+        - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      responses:
+        '200':
+          description: getAdminRevisionDownload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailableError' }
+  /admin/courses/{courseId}/corrections:
+    patch:
+      operationId: correctPublishedCourse
+      tags: [Course administration]
+      summary: Correct published course display text
+      description: Use contentRevision from the admin course detail. A changed value increments the content revision and records the admin and reason atomically.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision, reason]
+              anyOf: [{ required: [title] }, { required: [shortDescription] }]
+              properties:
+                expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+                reason: { type: string, minLength: 10, maxLength: 500 }
+                title: { type: string, minLength: 3, maxLength: 160 }
+                shortDescription: { anyOf: [{ const: '' }, { type: string, minLength: 10, maxLength: 300 }] }
+      responses:
+        '200':
+          description: Corrected display text and current content revision
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [course]
+                    properties:
+                      course:
+                        type: object
+                        required: [id, title, shortDescription, contentRevision]
+                        properties:
+                          id: { type: string }
+                          title: { type: string }
+                          shortDescription: { type: string }
+                          contentRevision: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409': { description: Stale content revision or course is no longer published }
+        '429': { description: Admin write limit exceeded }
+  /admin/courses/{courseId}/archive:
+    post:
+      operationId: archiveCourse
+      tags: [Course administration]
+      summary: Archive a published or provider-unavailable course
+      description: |
+        Current verified active admin session required and fenced in the transaction.
+        Supply the policy revision from GET /admin/courses/{courseId}; this tracks archive/
+        access-policy changes, not every curriculum edit. Archive stops catalog/detail,
+        anonymous preview, new Checkout and free-enrollment admissions. Active existing
+        enrolled students retain library/media/progress unless blocked or media-unavailable.
+        A previously admitted paid reservation can still settle; trusted payment accounting
+        is not dropped. No unarchive or hard-delete operation is introduced. Draft/pending/
+        rejected courses return INVALID_COURSE_STATE. A current-revision already-archived
+        request returns explicit no-op; stale revisions always conflict. Audit and policy
+        commit together. No query parameters or Idempotency-Key support.
+        All outcomes use Cache-Control no-store. Both course-policy mutations share the
+        per-user ADMIN_WRITE_RATE_LIMIT quota across course IDs (default 30/minute).
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArchiveCourseInput' }
+      responses:
+        '200':
+          description: Committed archive or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoursePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, INVALID_COURSE_STATE, COURSE_POLICY_REQUIRES_REVIEW, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/courses/{courseId}/access-policy:
+    patch:
+      operationId: changeCourseAccessPolicy
+      tags: [Course administration]
+      summary: Block or unblock course access for a legal or security reason
+      description: |
+        Current verified active admin session required and fenced in the transaction.
+        Does not change publication status, archivedAt, unavailableAt, media readiness,
+        enrollment, purchases, progress or financial history. Block hides the catalog and
+        denies new preview/Checkout/free enrollment as well as enrolled learning/progress.
+        Owner/admin review can inspect metadata but cannot bypass the block for video/PDF.
+        Unblock never unarchives, publishes a draft or repairs unavailable media. Reasons/
+        actor metadata are admin-only; learners see safe availability codes. Existing issued
+        credentials can survive until expiry (video <=15 minutes, PDF <=60 seconds).
+        Same-status current-revision requests are explicit no-ops; stale revisions return
+        STATE_CONFLICT even if status matches. No query parameters or extra body fields.
+        All outcomes use Cache-Control no-store. Shares the archive per-user write quota.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/CourseId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CourseAccessInput' }
+      responses:
+        '200':
+          description: Committed access policy or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CoursePolicyResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, COURSE_POLICY_REQUIRES_REVIEW, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: Body exceeds the one-megabyte JSON limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      tags: [Admin users]
+      summary: Search and list users as administrator
+      description: |
+        Requires a current verified active admin session. Searches literal case-insensitive
+        prefixes of name or normalized email; regex syntax is treated as text. q is trimmed
+        and lowercased. Unknown query keys, arrays and control/format characters are rejected.
+        Sort is createdAt descending then id descending. The opaque signed cursor is bound
+        to q/role/status; retain those filters for the next page. Changing filters or rotating
+        the access-signing secret requires starting a new list. No total count is returned.
+        Pagination is a live directory, not a frozen snapshot of concurrent profile/status changes.
+        All outcomes use Cache-Control no-store. Both directory GETs share a per-user quota
+        configured by PRIVATE_READ_RATE_LIMIT_MAX/WINDOW_MS (default 120/minute).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: role
+          in: query
+          schema: { type: string, enum: [student, instructor, admin] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, suspended] }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+        - { $ref: '#/components/parameters/Limit' }
+      responses:
+        '200':
+          description: Allowlisted user directory page
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserListResponse' }
+        '400':
+          description: VALIDATION_ERROR or INVALID_CURSOR, including a cursor from different filters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/users/{userId}:
+    get:
+      operationId: getAdminUser
+      tags: [Admin users]
+      summary: Read safe account details as administrator
+      description: |
+        No query parameters. Requires a current verified active admin session. Includes
+        createdAt/updatedAt, never password/reset/session tokens, private instructor profile,
+        financial data or internal security metadata. revision is the account status revision,
+        independent of profile edits. All outcomes use Cache-Control no-store. Shares the
+        directory read quota across list and detail requests, regardless of target id.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminUserId' }]
+      responses:
+        '200':
+          description: Allowlisted user details
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/users/{userId}/status:
+    patch:
+      operationId: changeAdminUserStatus
+      tags: [Admin users]
+      summary: Suspend or reactivate an account with an audit reason
+      description: |
+        Requires a current verified active admin session, rechecked and fenced inside the
+        transaction. No query parameters or extra body fields. Does not edit roles, email,
+        verification, purchases, progress, instructor approval or financial obligations.
+        Self-suspension is forbidden. A shared database guard protects concurrent admin
+        decisions; at least one verified active admin must remain. A real status change
+        atomically advances status/token versions, revokes refresh sessions, and appends audit.
+        Reactivation never revives old tokens; the user must log in again and verify if needed.
+        Supply the revision from the latest directory/detail response. A matching-revision
+        same-status request returns 200 with an explicit no-op message and no additional
+        status/token version or audit change. A stale revision returns 409 even if the desired
+        state already matches; reload before deciding. This endpoint has no Idempotency-Key.
+        User-wide write quota uses ADMIN_WRITE_RATE_LIMIT_MAX/WINDOW_MS (default 30/minute).
+        All outcomes use Cache-Control no-store.
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/AdminUserId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminUserStatusInput' }
+            example:
+              status: suspended
+              reason: Account suspended after a documented security review
+              expectedRevision: 0
+      responses:
+        '200':
+          description: Committed status change, or explicit matching-revision no-op
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdminUserStatusResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '409':
+          description: STATE_CONFLICT, SELF_SUSPENSION_NOT_ALLOWED, LAST_ACTIVE_ADMIN, or SECURITY_STATE_REQUIRES_REVIEW
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '413':
+          description: JSON body exceeds the one-megabyte limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalServerError' }
+        '503':
+          description: Request quota store is unavailable; RATE_LIMIT_UNAVAILABLE
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
   /users/me/courses/{courseId}/lessons/{lessonId}/progress:
     put:
       operationId: setLessonCompletion
       tags: [Learning progress]
       summary: Set or clear completion of an enrolled course lesson
       description: |
-        Requires a current verified active student session and active enrollment in a published
+        Requires a current verified active student session and active enrollment in a published or archived
         course. Preview/owner/admin review access grants no progress-write exemption.
         completed must be a real boolean; no query parameters are accepted. Repeated true
         preserves the original completion timestamp; false clears it. Resume position is
@@ -84,6 +1777,7 @@ paths:
         server proof of viewing video. The course percentage uses its current existing lessons,
         excludes orphan/foreign progress, and floors to two decimals (zero lessons is 0%).
         Completion/resume share a user-wide quota of 60/min across all courses/lessons.
+        Legal/security block or unavailable media denies new progress writes; archive alone does not.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/CourseId' }
@@ -119,7 +1813,7 @@ paths:
       tags: [Learning progress]
       summary: Save the enrolled student's resume lesson
       description: |
-        Requires a verified active student, live session, active enrollment and published
+        Requires a verified active student, live session, active enrollment and published or archived
         course. The lesson must still exist in this exact course. No query parameters or
         client-selected enrollment/student/timestamps are accepted. Repeated requests are
         idempotent. Saving resume position never marks a lesson completed.
@@ -158,8 +1852,10 @@ paths:
       summary: Issue a short-lived signed Mux playback token
       description: |
         A published preview lesson allows anonymous video playback, never PDF downloads.
-        Other published lessons require an active student enrollment. An active approved
+        Other published lessons and archived courses require an active student enrollment. An active approved
         course owner or administrator may review unpublished content without enrollment.
+        Archived lessons have no public preview. A legal/security block denies new credentials
+        even to reviewers. Unavailable media is never repaired by unblocking course access.
         A supplied invalid Authorization header always returns 401 (no anonymous fallback).
         Tokens expire after at most 900 seconds; renew through this endpoint. Revocation
         prevents new issuance, not the use of a token already issued until its expiry.
@@ -189,13 +1885,14 @@ paths:
       tags: [Learning access]
       summary: Issue a temporary authenticated PDF download URL
       description: |
-        Requires an active student enrollment in a published course, or the active approved
+        Requires an active student enrollment in a published or archived course, or the active approved
         course owner/administrator reviewing its content. Preview flags never grant PDF access.
         The attachment must be ready, authenticated, owned by the course instructor and attached
         to this exact lesson. assetId is a MediaAsset ID, not a provider ID; obtain it from the
         authenticated learning outline. No query parameters are accepted.
         URLs expire after at most 60 seconds. Request a new URL on expiry; never store one permanently.
         Bearer URLs remain usable until expiry after enrollment/session/account revocation.
+        Legal/security block overrides learner/owner/admin issuance; it never grants a PDF preview.
         Download and playback requests share the same authenticated user quota (30/min).
       security: [{ bearerAuth: [] }]
       parameters:
@@ -234,6 +1931,16 @@ paths:
         before allocation allows replacement. Cancel/success
         redirects do not change payment state. Only the durable verified Stripe event worker
         can confirm payment, enroll the buyer, and record pending instructor earnings.
+        New Checkout freezes the active financial policy when configured. When refund issuance
+        is enabled, missing reviewed policy returns 503 FINANCIAL_POLICY_NOT_CONFIGURED
+        before a new order/provider session is created. No legacy policy is inferred.
+        After a confirmed full refund, the same route reserves a fresh order/session using
+        the current server price/policy; access remains revoked until trusted paid fulfillment.
+        Enrollment identity and lesson history are retained, its source becomes the new order,
+        current completion/resume is recalculated, and old refund events cannot revoke it.
+        Independent admin/legal/security/legacy revocations return 409 ENROLLMENT_REVOKED.
+        If an independent block is imposed after reservation, genuine payment is accounted
+        while that block remains. No client reactivation/source/replacement fields are accepted.
       tags: [Checkout]
       security: [{ bearerAuth: [] }]
       parameters: [{ $ref: '#/components/parameters/CourseId' }]
@@ -269,7 +1976,7 @@ paths:
       description: |
         Title search is normalized Arabic/English prefix matching, not full-text or fuzzy search.
         Archived categories do not hide already published courses. Draft, pending, rejected,
-        and provider-unavailable courses are excluded.
+        provider-unavailable, archived and legal/security-blocked courses are excluded.
       tags: [Catalog]
       parameters:
         - in: query
@@ -357,7 +2064,7 @@ paths:
       parameters:
         - in: query
           name: status
-          schema: { type: string, enum: [draft, pending_review, published, rejected, unavailable], default: pending_review }
+          schema: { type: string, enum: [draft, pending_review, published, rejected, unavailable, archived], default: pending_review }
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
       responses:
@@ -1122,7 +2829,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [draft, pending_review, published, rejected, unavailable]
+            enum: [draft, pending_review, published, rejected, unavailable, archived]
             default: draft
         - name: page
           in: query
@@ -1603,11 +3310,20 @@ paths:
         Send the original uncompressed JSON bytes, at most 1 MiB, with Stripe-Signature.
         No JWT or browser/user rate limiter. Test Mode, platform-account snapshot events only.
         Supported types are checkout.session.completed, checkout.session.async_payment_succeeded,
-        checkout.session.async_payment_failed, and checkout.session.expired.
+        checkout.session.async_payment_failed, checkout.session.expired, refund.created,
+        refund.updated, refund.failed, charge.refunded, charge.dispute.created,
+        charge.dispute.updated, charge.dispute.closed, charge.dispute.funds_withdrawn,
+        and charge.dispute.funds_reinstated. Subscribe to all 13 snapshot types.
         Unsupported valid events are retained as ignored with no financial effects.
         HTTP 200 acknowledges durable receipt, NOT fulfillment. Duplicates never reopen
         processed/failed events. A worker validates current provider evidence and atomically
         confirms Order/Payment, Enrollment, pending EarningEntry, and the event itself.
+        New purchases freeze the active financial policy at Checkout and derive deadlines
+        from the trusted success-event created timestamp; late duplicates never move them.
+        Refund success updates Refund/Order/Payment/ledger/source-bound enrollment/audit and
+        the inbox atomically. Known-payment financial receipts open a guard-serialized hold.
+        Disputes and external partials remain held for operational review; closed is not an
+        automatic hold-release instruction. Financial receipts are processed even when issuance is disabled.
         Never call this endpoint from the frontend or treat a redirect as payment proof.
       security: []
       parameters:
@@ -1686,7 +3402,12 @@ paths:
         Active verified student, not the course owner. Send no body or an empty object.
         Creates one active Enrollment with null sourceOrderId, and no financial records or provider calls.
         Existing active access returns 200 unchanged, including after a later price change.
-        Revoked access returns ENROLLMENT_REVOKED; it is never silently restored.
+        If a refunded course is now free, an explicit call may reactivate the same enrollment
+        only after matching full-refund Order/Payment/Refund proof. Returns 200, with null
+        sourceOrderId, retained lesson progress and recalculated current completion/resume.
+        No new Order/Payment/Earning is created. An active pending purchase blocks this path.
+        Independent admin/legal/security/legacy revocations return ENROLLMENT_REVOKED;
+        no body field can force reactivation or supply the entitlement source.
         PAID_COURSE_REQUIRES_CHECKOUT and PAYMENT_PENDING are 409 conflicts.
         Quota is ENROLL_RATE_LIMIT_MAX (default 10 per minute), per user across all courses.
         All responses, including errors, use Cache-Control no-store.
@@ -1704,7 +3425,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EnrollmentResponse' }
         '200':
-          description: Already active; same enrollment unchanged
+          description: Already active, or same enrollment explicitly reactivated after proven full refund of a now-free course
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EnrollmentResponse' }
@@ -1722,10 +3443,15 @@ paths:
       summary: List the authenticated student's enrollments
       description: |
         Snapshot-consistent pagination, ordered enrolledAt descending then ID descending.
-        Only the current user's records. A nonpublished/deleted course remains a historical
+        Only the current user's records. Published and archived courses preserve active learner access.
+        A blocked, unavailable, draft or deleted course remains a historical
         enrollment with course null and available false, without leaking draft content.
         Each available active enrollment has dynamic current-curriculum progress;
         unavailable/revoked entries have progress null. Zero lessons means zero percent.
+        availabilityCode is AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE,
+        ENROLLMENT_REFUNDED or ENROLLMENT_REVOKED. Revocation reason is only refund,
+        restricted or null; raw legal/security reasons never appear in this student response.
+        Refunded is not a promise that the course is currently available to buy again.
         All private reads share PRIVATE_READ_RATE_LIMIT_MAX (default 120 per minute) per user.
         Cache-Control no-store applies to successes and errors.
       security: [{ bearerAuth: [] }]
@@ -1750,7 +3476,7 @@ paths:
     get:
       operationId: getMyLearningCourse
       tags: [Learning library]
-      summary: Read the enrolled student's published learning outline
+      summary: Read the enrolled student's published or archived learning outline
       description: |
         Active own enrollment required; missing/revoked/non-owned enrollment returns 404.
         An unavailable/nonpublished/deleted course returns 409 COURSE_UNAVAILABLE.
@@ -1779,7 +3505,7 @@ paths:
       operationId: listMyOrders
       tags: [Orders]
       summary: Read the current student's order history
-      description: Immutable title/price snapshots, newest first; shared private-read quota and no-store. Read-only, never calls Stripe or fulfills payments.
+      description: Immutable title/price snapshots, newest first, with latest persisted safe refund summary; shared private-read quota and no-store. A historical refunded order does not describe a newer entitlement. Read-only, never calls Stripe or fulfills payments.
       security: [{ bearerAuth: [] }]
       parameters:
         - { $ref: '#/components/parameters/Page' }
@@ -1854,12 +3580,15 @@ paths:
       operationId: getAdminOrder
       tags: [Orders]
       summary: Read one order and safe payment details as administrator
-      description: Admin only; no provider references, customer email, keys or leases. Shared private-read quota and no-store.
+      description: Admin only. Includes safe Stripe identifiers and a paginated refund history. Shared private-read quota and no-store.
       security: [{ bearerAuth: [] }]
-      parameters: [{ $ref: '#/components/parameters/OrderId' }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderId' }
+        - { name: refundLimit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: refundCursor, in: query, description: Opaque cursor bound to this order and administrator, schema: { type: string, maxLength: 1024 } }
       responses:
         '200':
-          description: Financial split snapshot and safe payment status
+          description: Financial split, safe Stripe identifiers and refund history
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AdminOrderDetailsResponse' }
@@ -1871,6 +3600,45 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
 components:
   parameters:
+    InstructorFinanceCurrency:
+      name: currency
+      in: query
+      schema: { type: string, const: EGP, default: EGP }
+    InstructorFinanceFrom:
+      name: from
+      in: query
+      description: Inclusive UTC start. Supply both bounds or omit both.
+      schema: { type: string, format: date-time, pattern: 'Z$' }
+    InstructorFinanceTo:
+      name: to
+      in: query
+      description: Exclusive UTC end. The interval is at most 366 days and cannot end in the future.
+      schema: { type: string, format: date-time, pattern: 'Z$' }
+    InstructorFinanceLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    InstructorFinanceCursor:
+      name: cursor
+      in: query
+      description: Opaque cursor bound to the authenticated instructor, list and filters.
+      schema: { type: string, maxLength: 1024 }
+    PayoutId:
+      name: payoutId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
+    PayoutCommandKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Scoped to the authenticated admin and action. Reuse only for identical retries.
+      schema: { type: string, minLength: 16, maxLength: 128, pattern: '^[A-Za-z0-9_.-]+$' }
+    AdminUserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' }
     OrderId:
       name: orderId
       in: path
@@ -1919,6 +3687,40 @@ components:
       in: cookie
       name: refresh_token
   responses:
+    PayoutCommandReceipt:
+      description: Original accepted result, also returned on an identical retry. GET the payout for its current state.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [payout]
+                properties:
+                  payout:
+                    type: object
+                    required: [id, status, revision]
+                    properties:
+                      id: { type: string }
+                      status: { enum: [pending, paid, cancelled] }
+                      revision: { type: integer, minimum: 1 }
+    PayoutDraftReceipt:
+      description: Original draft reservation receipt with status draft and revision zero
+      headers:
+        Cache-Control: { schema: { const: no-store } }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [payout]
+                properties:
+                  payout: { $ref: '#/components/schemas/PayoutRecord' }
     ValidationError:
       description: Request data or verification token is invalid
       content:
@@ -1988,12 +3790,625 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     ServiceUnavailableError:
-      description: Mux configuration or service is temporarily unavailable
+      description: A required service, provider, configuration or request quota store is temporarily unavailable
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
+    InstructorFinanceId:
+      type: string
+      pattern: '^[a-fA-F0-9]{24}$'
+    InstructorFinanceMinor:
+      type: integer
+      minimum: -9007199254740991
+      maximum: 9007199254740991
+      description: EGP minor units. Signed amounts can represent refunds or debt.
+    InstructorFinanceSummaryData:
+      type: object
+      required: [summary]
+      properties:
+        summary: { $ref: '#/components/schemas/FinanceSummary' }
+    AdminFinanceSummaryData:
+      type: object
+      required: [instructorId, summary]
+      properties:
+        instructorId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        summary: { $ref: '#/components/schemas/FinanceSummary' }
+    AdminDashboardData:
+      type: object
+      required: [users, courses, finance]
+      properties:
+        users:
+          type: object
+          required: [total, active, suspended, students, activeInstructors, pendingApplications]
+          properties:
+            total: { type: integer, minimum: 0 }
+            active: { type: integer, minimum: 0 }
+            suspended: { type: integer, minimum: 0 }
+            students: { type: integer, minimum: 0 }
+            activeInstructors: { type: integer, minimum: 0 }
+            pendingApplications: { type: integer, minimum: 0 }
+        courses:
+          type: object
+          required: [total, draft, pendingReview, published, rejected, unavailable, archived]
+          properties:
+            total: { type: integer, minimum: 0 }
+            draft: { type: integer, minimum: 0 }
+            pendingReview: { type: integer, minimum: 0 }
+            published: { type: integer, minimum: 0 }
+            rejected: { type: integer, minimum: 0 }
+            unavailable: { type: integer, minimum: 0 }
+            archived: { type: integer, minimum: 0 }
+        finance: { $ref: '#/components/schemas/FinanceSummary' }
+    FinanceSummary:
+      type: object
+      required: [currency, range, asOf, saleCount, successfulRefundCount, paidPayoutCount, activeHoldCount, hasActiveHolds, grossSalesMinor, successfulRefundsMinor, netSalesMinor, platformCommissionNetMinor, instructorEarnedNetMinor, pendingMinor, pendingSalesMinor, pendingAdjustmentsMinor, eligibleAvailableMinor, negativeCarryMinor, reservedMinor, paidPayoutsMinor, simulatedPaidPayoutsMinor]
+      properties:
+        currency: { const: EGP }
+        range: { type: object, required: [from, to], properties: { from: { type: string, format: date-time }, to: { type: string, format: date-time } } }
+        asOf: { type: string, format: date-time }
+        saleCount: { type: integer, minimum: 0 }
+        successfulRefundCount: { type: integer, minimum: 0 }
+        paidPayoutCount: { type: integer, minimum: 0 }
+        activeHoldCount: { type: integer, minimum: 0 }
+        hasActiveHolds: { type: boolean }
+        grossSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        successfulRefundsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        netSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        platformCommissionNetMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        instructorEarnedNetMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingSalesMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        pendingAdjustmentsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        eligibleAvailableMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        negativeCarryMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        reservedMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        paidPayoutsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        simulatedPaidPayoutsMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+    InstructorSalesData:
+      type: object
+      required: [asOf, sales, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        sales: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorSale' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorEarningsData:
+      type: object
+      required: [asOf, earnings, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        earnings: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorEarning' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorPayoutHistoryData:
+      type: object
+      required: [asOf, payouts, pagination]
+      properties:
+        asOf: { type: string, format: date-time }
+        payouts: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/InstructorPayout' } }
+        pagination: { $ref: '#/components/schemas/InstructorFinancePagination' }
+    InstructorFinancePagination:
+      type: object
+      required: [hasMore, nextCursor]
+      properties:
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'] }
+    InstructorSale:
+      type: object
+      required: [id, courseId, courseTitle, status, currency, amountMinor, platformCommissionMinor, instructorEarnedMinor, paidAt, paymentConfirmedAt, refund]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        courseId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        courseTitle: { type: string }
+        status: { enum: [paid, refunded] }
+        currency: { const: EGP }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        platformCommissionMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        instructorEarnedMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        paidAt: { type: string, format: date-time }
+        paymentConfirmedAt: { type: [string, 'null'], format: date-time }
+        refund: { type: [object, 'null'], required: [amountMinor, completedAt], properties: { amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }, completedAt: { type: string, format: date-time } } }
+    InstructorEarning:
+      type: object
+      required: [id, orderId, type, status, amountMinor, currency, createdAt, eligibleAt, payout]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        orderId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        type: { enum: [sale, refund_adjustment] }
+        status: { enum: [pending, eligible, included_in_payout, reversed] }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        eligibleAt: { type: [string, 'null'], format: date-time }
+        payout: { type: [object, 'null'], required: [id, status], properties: { id: { $ref: '#/components/schemas/InstructorFinanceId' }, status: { enum: [draft, pending, paid, cancelled] } } }
+    InstructorPayout:
+      type: object
+      required: [id, status, currency, amountMinor, lineCount, periodStart, periodEnd, cutoffAt, createdAt, paidAt, cancelledAt, simulated]
+      properties:
+        id: { $ref: '#/components/schemas/InstructorFinanceId' }
+        status: { enum: [draft, pending, paid, cancelled] }
+        currency: { const: EGP }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        lineCount: { type: integer, minimum: 1, maximum: 1000 }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        paidAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+        simulated: { type: boolean }
+    InstructorPayoutDetailData:
+      type: object
+      required: [asOf, payout, items]
+      properties:
+        asOf: { type: string, format: date-time }
+        payout: { $ref: '#/components/schemas/InstructorPayout' }
+        items: { type: array, minItems: 1, maxItems: 1000, items: { $ref: '#/components/schemas/InstructorPayoutItem' } }
+    InstructorPayoutItem:
+      type: object
+      required: [earningEntryId, type, amountMinor, currency]
+      properties:
+        earningEntryId: { $ref: '#/components/schemas/InstructorFinanceId' }
+        type: { enum: [sale, refund_adjustment] }
+        amountMinor: { $ref: '#/components/schemas/InstructorFinanceMinor' }
+        currency: { const: EGP }
+    PayoutTransferMethod:
+      type: string
+      enum: [bank_transfer, manual_transfer, test_simulation]
+      description: Simulation is available in Stripe Test Mode.
+    PayoutEvidenceReference:
+      type: string
+      minLength: 3
+      maxLength: 128
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._/-]+$'
+      description: Reference is trimmed and uppercased. SIM- references are reserved for test_simulation.
+    PayoutSubmit:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, transferMethod]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+    PayoutPaidEvidence:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, transferMethod, transferAttemptId, confirmedAmountMinor, transferReference]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+        transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+        confirmedAmountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        transferReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+    PayoutCancel:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, reason]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, reason, evidenceReference]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            evidenceReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+    PayoutReconcile:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, confirmedAmountMinor, transferReference, reason, outcome]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            confirmedAmountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+            transferReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            outcome: { enum: [confirmed_paid] }
+        - type: object
+          additionalProperties: false
+          required: [expectedRevision, transferMethod, transferAttemptId, reason, evidenceReference, outcome]
+          properties:
+            expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+            transferMethod: { $ref: '#/components/schemas/PayoutTransferMethod' }
+            transferAttemptId: { type: string, format: uuid, pattern: '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$' }
+            reason: { type: string, minLength: 10, maxLength: 500 }
+            evidenceReference: { $ref: '#/components/schemas/PayoutEvidenceReference' }
+            outcome: { enum: [confirmed_not_sent, unknown] }
+    PayoutMonth:
+      type: string
+      pattern: '^[2-9][0-9]{3}-(0[1-9]|1[0-2])$'
+      not: { const: '9999-12' }
+      description: Calendar month in Africa/Cairo
+    PayoutCutoff:
+      type: string
+      format: date-time
+      pattern: 'Z$'
+      description: UTC cutoff within the Cairo month and no later than now. At month end, the exact end instant is excluded from sale selection.
+    PayoutRecord:
+      type: object
+      required: [id, instructorId, currency, amountMinor, lineCount, periodStart, periodEnd, cutoffAt, createdAt, status, revision]
+      properties:
+        id: { type: string }
+        instructorId: { type: string }
+        currency: { const: EGP }
+        amountMinor: { type: integer, minimum: 1 }
+        lineCount: { type: integer, minimum: 1, maximum: 1000 }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        status: { enum: [draft, pending, paid, cancelled] }
+        revision: { type: integer, minimum: 0 }
+        hasActiveHolds: { type: boolean, description: Present on current-state reads }
+        sealedAt: { type: [string, 'null'], format: date-time }
+        sealedBy: { type: [string, 'null'], description: Admin assigned to the sealed transfer attempt }
+        transferAttemptId: { type: [string, 'null'], format: uuid }
+        transferMethod: { enum: [bank_transfer, manual_transfer, test_simulation, null] }
+        transferOutcome: { enum: [not_started, unknown, confirmed_paid, confirmed_not_sent] }
+        transferReference: { type: [string, 'null'] }
+        paidAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+    SettlementPreview:
+      type: object
+      required: [currency, asOf, cutoffAt, periodStart, periodEnd, entryCount, selectedEntryCount, eligibleSaleMinor, eligibleAdjustmentMinor, netEligibleMinor, deferredAdjustmentMinor, blocked, reasonCodes]
+      properties:
+        currency: { const: EGP }
+        asOf: { type: string, format: date-time }
+        cutoffAt: { type: string, format: date-time }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        entryCount: { type: integer, minimum: 0 }
+        selectedEntryCount: { type: integer, minimum: 0 }
+        eligibleSaleMinor: { type: integer }
+        eligibleAdjustmentMinor: { type: integer }
+        netEligibleMinor: { type: integer }
+        deferredAdjustmentMinor: { type: integer }
+        blocked: { type: boolean }
+        reasonCodes: { type: array, items: { type: string } }
+    CreateRefundInput:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 500, description: Trimmed plain text; raw control and Unicode format characters are rejected }
+        overrideWindow: { type: boolean, default: false }
+    RefundAccepted:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, amountMinor, currency, status, createdAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        orderId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        status: { const: requested }
+        createdAt: { type: string, format: date-time }
+    Refund:
+      type: object
+      additionalProperties: false
+      required: [id, orderId, amountMinor, currency, status, createdAt, updatedAt, completedAt, failureCode]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        orderId: { type: string, pattern: '^[a-f0-9]{24}$' }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        status: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        failureCode: { type: [string, 'null'], enum: [REFUND_PROVIDER_UNAVAILABLE, REFUND_EVIDENCE_MISMATCH, REFUND_PROCESSING_FAILED, REFUND_REQUIRES_REVIEW, null] }
+    RefundAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund]
+          properties:
+            refund: { $ref: '#/components/schemas/RefundAccepted' }
+        message: { type: string }
+    RefundResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refund]
+          properties:
+            refund: { $ref: '#/components/schemas/Refund' }
+    RefundListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [refunds, pagination]
+          properties:
+            refunds: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Refund' } }
+            pagination:
+              type: object
+              additionalProperties: false
+              required: [hasMore, nextCursor]
+              properties:
+                hasMore: { type: boolean }
+                nextCursor: { type: [string, 'null'], maxLength: 1024 }
+    ArchiveCourseInput:
+      type: object
+      additionalProperties: false
+      required: [reason, expectedRevision]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 500, description: Trimmed plain text; raw control and Unicode format characters are rejected }
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    CourseAccessInput:
+      type: object
+      additionalProperties: false
+      required: [accessStatus, reason, expectedRevision]
+      properties:
+        accessStatus: { type: string, enum: [available, blocked] }
+        reason: { type: string, minLength: 10, maxLength: 500 }
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    CourseRevision:
+      type: object
+      required: [id, courseId, number, status, revision, baseContentRevision, metadata]
+      properties:
+        rejectionReason: { type: [string, 'null'] }
+        id: { type: string }
+        courseId: { type: string }
+        number: { type: integer, minimum: 1 }
+        status: { enum: [draft, pending_review, approved, rejected, discarded] }
+        revision: { type: integer, minimum: 0 }
+        baseContentRevision: { type: integer, minimum: 0 }
+        metadata:
+          allOf: [{ $ref: '#/components/schemas/CourseInputFields' }]
+          properties:
+            coverAssetId: { type: [string, 'null'] }
+        logicalId: { type: string, description: Present when a child was created }
+    RevisionIntentInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [purpose, targetId]
+      properties:
+        purpose: { enum: [course_cover, lesson_attachment] }
+        targetId: { type: string, description: Course ID for covers or logical lesson ID for attachments, pattern: '^[a-fA-F0-9]{24}$' }
+      unevaluatedProperties: false
+    RevisionConfirmedAsset:
+      allOf: [{ $ref: '#/components/schemas/CourseRevision' }]
+      required: [assetId]
+      properties:
+        assetId: { type: string }
+    RevisionIntent:
+      allOf: [{ $ref: '#/components/schemas/RevisionConfirmedAsset' }]
+      required: [upload, maxBytes]
+      properties:
+        maxBytes: { type: integer }
+        upload:
+          type: object
+          required: [uploadUrl, apiKey, signature, parameters, resourceType, deliveryType, expiresAt, providerUploadValidUntil]
+          properties:
+            uploadUrl: { type: string, format: uri }
+            apiKey: { type: string }
+            signature: { type: string }
+            parameters: { type: object, additionalProperties: true }
+            resourceType: { type: string }
+            deliveryType: { type: string }
+            expiresAt: { type: string, format: date-time }
+            providerUploadValidUntil: { type: string, format: date-time }
+    RevisionUpload:
+      allOf: [{ $ref: '#/components/schemas/CourseRevision' }]
+      required: [upload]
+      properties:
+        upload:
+          type: object
+          required: [id, url, timeoutSeconds]
+          properties:
+            id: { type: string }
+            url: { type: string, format: uri }
+            timeoutSeconds: { type: integer }
+    RevisionPage:
+      type: object
+      required: [revision, items, nextAfter]
+      properties:
+        revision: { type: integer }
+        nextAfter: { type: [integer, 'null'] }
+        items:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [logicalId, position, title]
+            properties:
+              logicalId: { type: string }
+              position: { type: integer }
+              title: { type: string }
+              description: { type: string }
+              videoStatus: { type: string }
+              attachments: { type: array, items: { type: string } }
+              durationSeconds: { type: integer }
+              isPreview: { type: boolean }
+    PendingRevisions:
+      type: object
+      required: [items, nextAfter]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CourseRevision' } }
+        nextAfter: { type: [string, 'null'] }
+    RevisionReviewDetail:
+      allOf: [{ $ref: '#/components/schemas/CourseRevision' }]
+      properties:
+        currentContentRevision: { type: integer }
+        history: { type: array, description: Latest 50 audit events, items: { type: object } }
+        changes:
+          type: array
+          items:
+            type: object
+            properties:
+              kind: { enum: [course, section, lesson] }
+              id: { type: string }
+              before: { type: [object, 'null'] }
+              after: { type: [object, 'null'] }
+              videoChanged: { type: boolean }
+    RevisionDecisionFields:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [baseContentRevision]
+      properties:
+        baseContentRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    RevisionDecision:
+      allOf: [{ $ref: '#/components/schemas/RevisionDecisionFields' }]
+      unevaluatedProperties: false
+    RejectRevision:
+      allOf: [{ $ref: '#/components/schemas/RevisionDecisionFields' }]
+      required: [reason]
+      properties:
+        reason: { type: string, minLength: 10, maxLength: 500 }
+      unevaluatedProperties: false
+    RevisionGuardFields:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    RevisionGuard:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      unevaluatedProperties: false
+    RevisionMetadataPatch:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }, { $ref: '#/components/schemas/CourseInputFields' }]
+      minProperties: 2
+      unevaluatedProperties: false
+    RevisionOrderInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [orderedIds]
+      properties:
+        orderedIds: { type: array, maxItems: 200, uniqueItems: true, items: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
+      unevaluatedProperties: false
+    RevisionSectionInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      required: [title]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+      unevaluatedProperties: false
+    RevisionLessonPatch:
+      allOf: [{ $ref: '#/components/schemas/RevisionGuardFields' }]
+      minProperties: 2
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+        description: { type: string, maxLength: 10000 }
+        isPreview: { type: boolean }
+      unevaluatedProperties: false
+    RevisionLessonInput:
+      allOf: [{ $ref: '#/components/schemas/RevisionLessonPatch' }]
+      required: [title]
+    CoursePolicyFields:
+      type: object
+      required: [id, status, accessStatus, revision, archivedAt, unavailableAt, archivedBy, archiveReason, accessChangedAt, accessChangedBy, accessReason]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        status: { type: string, enum: [draft, pending_review, published, rejected, unavailable, archived] }
+        accessStatus: { type: string, enum: [available, blocked] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        archivedAt: { type: [string, 'null'], format: date-time }
+        unavailableAt: { type: [string, 'null'], format: date-time }
+        archivedBy: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        archiveReason: { type: [string, 'null'], description: Admin-only archive reason }
+        accessChangedAt: { type: [string, 'null'], format: date-time }
+        accessChangedBy: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
+        accessReason: { type: [string, 'null'], description: Admin-only legal/security policy reason }
+    CoursePolicy:
+      allOf: [{ $ref: '#/components/schemas/CoursePolicyFields' }]
+      unevaluatedProperties: false
+    AdminCourse:
+      properties:
+        contentRevision: { type: integer, minimum: 0 }
+      allOf:
+        - { $ref: '#/components/schemas/CourseFields' }
+        - { $ref: '#/components/schemas/CoursePolicyFields' }
+      unevaluatedProperties: false
+    CoursePolicyResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [course]
+          properties:
+            course: { $ref: '#/components/schemas/CoursePolicy' }
+        message: { type: string }
+    AdminUser:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, roles, status, instructorStatus, revision]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        name: { type: string }
+        email: { type: string, format: email }
+        roles: { type: array, items: { type: string, enum: [student, instructor, admin] } }
+        status: { type: string, enum: [active, suspended] }
+        instructorStatus: { type: string, enum: [none, pending, approved, rejected] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AdminUserStatusInput:
+      type: object
+      additionalProperties: false
+      required: [status, reason, expectedRevision]
+      properties:
+        status: { type: string, enum: [active, suspended] }
+        reason:
+          type: string
+          minLength: 10
+          maxLength: 500
+          description: Trimmed plain text; control and Unicode format characters are rejected before trimming
+        expectedRevision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+    AdminUserResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [data, message]
+      properties:
+        message: { type: string }
+        data:
+          type: object
+          additionalProperties: false
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/AdminUser' }
+    AdminUserListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [users, pagination]
+          properties:
+            users: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminUser' } }
+            pagination:
+              type: object
+              additionalProperties: false
+              required: [nextCursor, hasMore]
+              properties:
+                nextCursor: { type: [string, 'null'], maxLength: 1024 }
+                hasMore: { type: boolean }
     ProgressSummary:
       type: object
       additionalProperties: false
@@ -2067,7 +4482,7 @@ components:
     Enrollment:
       type: object
       additionalProperties: false
-      required: [id, courseId, sourceOrderId, status, enrolledAt, completedAt, revokedAt, lastLessonId]
+      required: [id, courseId, sourceOrderId, status, enrolledAt, completedAt, revokedAt, revocationReason, lastLessonId]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{24}$' }
         courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
@@ -2076,6 +4491,10 @@ components:
         enrolledAt: { type: string, format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
         revokedAt: { type: [string, 'null'], format: date-time }
+        revocationReason:
+          type: [string, 'null']
+          enum: [refund, restricted, null]
+          description: Coarse owner-safe category; independent and legacy revocations use restricted
         lastLessonId: { type: [string, 'null'], pattern: '^[a-f0-9]{24}$' }
     EnrollmentResponse:
       type: object
@@ -2090,8 +4509,10 @@ components:
             enrollment: { $ref: '#/components/schemas/Enrollment' }
     LibraryCourse:
       type: object
-      required: [id, slug, title, shortDescription, level, language, coverUrl]
+      required: [id, slug, title, shortDescription, level, language, coverUrl, status, archivedAt]
       properties:
+        status: { type: string, enum: [published, archived] }
+        archivedAt: { type: [string, 'null'], format: date-time }
         id: { type: string }
         slug: { type: string }
         title: { type: string }
@@ -2115,12 +4536,13 @@ components:
               items:
                 type: object
                 additionalProperties: false
-                required: [enrollment, course, available, progress]
+                required: [enrollment, course, available, availabilityCode, progress]
                 properties:
                   progress:
                     oneOf: [{ $ref: '#/components/schemas/ProgressSummary' }, { type: 'null' }]
                   enrollment: { $ref: '#/components/schemas/Enrollment' }
                   available: { type: boolean }
+                  availabilityCode: { type: string, enum: [AVAILABLE, COURSE_ACCESS_BLOCKED, COURSE_UNAVAILABLE, ENROLLMENT_REFUNDED, ENROLLMENT_REVOKED] }
                   course:
                     oneOf:
                       - allOf: [{ $ref: '#/components/schemas/LibraryCourse' }]
@@ -2184,7 +4606,7 @@ components:
             course: { $ref: '#/components/schemas/LearningCourse' }
     OrderSnapshot:
       type: object
-      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt, paidAt]
+      required: [id, courseId, courseTitle, amountMinor, currency, status, expiresAt, createdAt, paidAt, latestRefund]
       properties:
         id: { type: string, pattern: '^[a-f0-9]{24}$' }
         courseId: { type: string, pattern: '^[a-f0-9]{24}$' }
@@ -2195,6 +4617,21 @@ components:
         expiresAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }
         paidAt: { type: [string, 'null'], format: date-time }
+        latestRefund:
+          description: Latest persisted refund by creation time and ID, not cumulative refunded money or current access authority
+          oneOf: [{ $ref: '#/components/schemas/OrderRefundSummary' }, { type: 'null' }]
+    OrderRefundSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, amountMinor, currency, createdAt, completedAt]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        kind: { type: string, enum: [full, partial] }
+        status: { type: string, enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
     StudentOrder:
       allOf: [{ $ref: '#/components/schemas/OrderSnapshot' }]
       unevaluatedProperties: false
@@ -2266,11 +4703,45 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [order, payment]
+          required: [order, payment, refunds, refundPagination]
           properties:
             order: { $ref: '#/components/schemas/AdminOrder' }
             payment:
-              oneOf: [{ $ref: '#/components/schemas/PaymentStatus' }, { type: 'null' }]
+              oneOf: [{ $ref: '#/components/schemas/AdminOrderPayment' }, { type: 'null' }]
+            refunds: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/AdminOrderRefund' } }
+            refundPagination:
+              type: object
+              required: [hasMore, nextCursor]
+              properties:
+                hasMore: { type: boolean }
+                nextCursor: { type: [string, 'null'] }
+    AdminOrderPayment:
+      type: object
+      additionalProperties: false
+      required: [id, provider, status, amountMinor, currency, paidAt, paymentConfirmedAt, paymentIntentId, checkoutSessionId]
+      properties:
+        id: { type: string }
+        provider: { const: stripe }
+        status: { enum: [created, processing, succeeded, failed, refunded] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        paidAt: { type: [string, 'null'], format: date-time }
+        paymentConfirmedAt: { type: [string, 'null'], format: date-time }
+        paymentIntentId: { type: [string, 'null'], maxLength: 255, pattern: '^pi_[A-Za-z0-9_]+$' }
+        checkoutSessionId: { type: [string, 'null'], maxLength: 255, pattern: '^cs_(test|live)_[A-Za-z0-9_]+$' }
+    AdminOrderRefund:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, amountMinor, currency, createdAt, completedAt, providerRefundId]
+      properties:
+        id: { type: string, pattern: '^[a-f0-9]{24}$' }
+        kind: { enum: [full, partial] }
+        status: { enum: [requested, processing, pending, requires_reconciliation, succeeded, failed, cancelled] }
+        amountMinor: { type: integer, minimum: 1, maximum: 9007199254740991 }
+        currency: { const: EGP }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        providerRefundId: { type: [string, 'null'], maxLength: 255, pattern: '^re_[A-Za-z0-9_]+$' }
     CheckoutOrder:
       type: object
       additionalProperties: false
@@ -2470,7 +4941,7 @@ components:
           type: object
           required: [course, instructor, sections, reviewEvents]
           properties:
-            course: { $ref: '#/components/schemas/Course' }
+            course: { $ref: '#/components/schemas/AdminCourse' }
             instructor:
               oneOf:
                 - type: object
@@ -3088,6 +5559,9 @@ components:
       minProperties: 1
       unevaluatedProperties: false
     Course:
+      allOf: [{ $ref: '#/components/schemas/CourseFields' }]
+      unevaluatedProperties: false
+    CourseFields:
       type: object
       required:
         - id
@@ -3106,6 +5580,9 @@ components:
         - priceMinor
         - currency
         - status
+        - accessStatus
+        - revision
+        - archivedAt
         - submittedAt
         - reviewedAt
         - publishedAt
@@ -3114,8 +5591,10 @@ components:
         - rejectionReason
         - createdAt
         - updatedAt
-      additionalProperties: false
       properties:
+        activeRevisionId:
+          type: [string, 'null']
+          description: Included in the instructor course detail to resume the active revision.
         id:
           type: string
           pattern: '^[a-fA-F0-9]{24}$'
@@ -3181,7 +5660,10 @@ components:
           const: EGP
         status:
           type: string
-          enum: [draft, pending_review, published, rejected, unavailable]
+          enum: [draft, pending_review, published, rejected, unavailable, archived]
+        accessStatus: { type: string, enum: [available, blocked] }
+        revision: { type: integer, minimum: 0, maximum: 9007199254740991 }
+        archivedAt: { type: [string, 'null'], format: date-time }
         submittedAt: { type: [string, 'null'], format: date-time }
         reviewedAt: { type: [string, 'null'], format: date-time }
         publishedAt: { type: [string, 'null'], format: date-time }

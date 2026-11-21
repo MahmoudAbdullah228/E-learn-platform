@@ -22,7 +22,36 @@ test('downloadable contracts match the canonical document and expose only implem
   const source = await readFile(new URL('../docs/openapi.yaml', import.meta.url), 'utf8');
   const json = await request(app).get('/api/v1/openapi.json').expect(200);
   assert.deepEqual(json.body, parse(source));
-  assert.equal(Object.keys(json.body.paths).length, 53);
+  assert.equal(Object.keys(json.body.paths).length, 99);
+  for (const path of ['/admin/dashboard', '/admin/finance/summary']) {
+    assert.deepEqual(json.body.paths[path]?.get?.security, [{ bearerAuth: [] }]);
+  }
+  assert.ok(json.body.components.schemas.AdminOrderPayment.properties.paymentIntentId);
+  assert.equal(json.body.components.schemas.PaymentStatus.properties.paymentIntentId, undefined);
+  for (const path of ['finance/summary', 'sales', 'earnings', 'payouts', 'payouts/{payoutId}']) {
+    assert.deepEqual(json.body.paths[`/instructor/${path}`]?.get?.security, [{ bearerAuth: [] }]);
+  }
+  for (const [method, path] of [['get', '/admin/instructors/{instructorId}/settlement-preview'],
+    ['post', '/admin/payouts'], ['get', '/admin/payouts'], ['get', '/admin/payouts/{payoutId}'],
+    ...['submit', 'mark-paid', 'cancel', 'reconcile'].map(action => ['post', `/admin/payouts/{payoutId}/${action}`])]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
+  for (const [method, path] of [['post', '/admin/orders/{orderId}/refunds'],
+    ['get', '/admin/refunds'], ['get', '/admin/refunds/{refundId}']]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
+  for (const [method, path] of [['post', '/admin/courses/{courseId}/archive'],
+    ['patch', '/admin/courses/{courseId}/access-policy']]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
+  for (const [method, path] of [['get', '/admin/users'], ['get', '/admin/users/{userId}'],
+    ['patch', '/admin/users/{userId}/status']]) {
+    assert.ok(json.body.paths[path]?.[method]);
+    assert.deepEqual(json.body.paths[path][method].security, [{ bearerAuth: [] }]);
+  }
   assert.ok(json.body.paths['/users/me/courses/{courseId}/lessons/{lessonId}/progress']?.put);
   assert.ok(json.body.paths['/users/me/courses/{courseId}/last-lesson']?.put);
   assert.ok(json.body.paths['/lessons/{lessonId}/playback']?.get);

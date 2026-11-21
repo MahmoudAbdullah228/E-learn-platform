@@ -191,6 +191,10 @@ test('limited routes request isolated shared-store instances by limiter namespac
 
   assert.deepEqual(namespaces,
     [
+      'admin-refunds-read',
+      'admin-refunds-write',
+      'admin-users-read',
+      'admin-users-write',
       'register',
       'verify-email',
       'resend-verification',
@@ -213,7 +217,14 @@ test('limited routes request isolated shared-store instances by limiter namespac
       'admin-write',
       'catalog',
       'instructor-profile',
+      'course-revision-review',
+      'course-revision-editor',
       'course-review',
+      'admin-course-policy',
       'admin-course-review',
+      'admin-payouts-read',
+      'admin-payouts-write',
+      'instructor-finance',
+      'admin-finance',
     ]);
 });

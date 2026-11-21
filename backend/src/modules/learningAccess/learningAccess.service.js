@@ -39,7 +39,7 @@ export function createLearningAccessService({ videoProvider, mediaProvider, vide
         signal.throwIfAborted();
         let playbackId;
         try {
-          playbackId = await prepareSignedPlayback({ lessonId: input.lessonId,
+          playbackId = await prepareSignedPlayback({ lessonId: input.lessonId, revisionId: input.revisionId,
             assetId: initial.lesson.videoAssetId, provider: videoProvider, signal, clock });
         } catch (error) {
           if (!signal.aborted && error?.code === 'VIDEO_ASSET_UNAVAILABLE') {

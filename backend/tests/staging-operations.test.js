@@ -35,7 +35,7 @@ test('empty staging status is explicit counts, not a readiness claim', async () 
   assert.deepEqual(result.mediaCleanup, { queued: 0, due: 0, exhausted: 0 });
   assert.equal(result.observedAt, now.toISOString());
   assert.equal(Object.hasOwn(result, 'ready'), false);
-  assert.equal(queries.length, 4);
+  assert.equal(queries.length, 6);
   for (const query of queries) {
     assert.equal(query.options.maxTimeMS, 5000);
     assert.ok(query.pipeline.every(stage => !('$out' in stage) && !('$merge' in stage)));

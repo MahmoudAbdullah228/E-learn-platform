@@ -25,7 +25,7 @@ export async function enqueueAttachmentCleanup(lessons, session, now = new Date(
   if (!assetIds.length && !lessonIds.length) return;
   // Pending intents are not in Lesson.attachments until confirmation succeeds.
   const assets = await MediaAsset.find({
-    purpose: 'lesson_attachment',
+    purpose: 'lesson_attachment', revisionId: null,
     status: { $in: ['pending', 'ready', 'deleting'] },
     $or: [{ _id: { $in: assetIds } }, { targetId: { $in: lessonIds }, status: 'pending' }],
   }).select('+cleanupNotBefore').session(session);

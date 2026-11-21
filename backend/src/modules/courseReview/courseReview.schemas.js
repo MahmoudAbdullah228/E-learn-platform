@@ -14,7 +14,7 @@ export const reviewCourseParamsSchema = z.object({
 export const emptyReviewBodySchema = z.object({}).strict().optional();
 
 export const adminCourseListQuerySchema = z.object({
-  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable'])
+  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable', 'archived'])
     .default('pending_review'),
   page,
   limit,

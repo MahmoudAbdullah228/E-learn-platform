@@ -1,0 +1,154 @@
+# Sprint 3 — S3-01 contract and schema handoff
+
+Date: 2026-11-18. Status: **S3-02 foundation through S3-08 refunds, repurchase and internal earnings eligibility implemented locally;
+later Story contracts remain design only**.
+Precedence for selected product behavior: [policy register](sprint_3_policy_register.md).
+Architecture: [financial ADR](adr-0006-financial-integrity-and-settlements.md) and
+[content ADR](adr-0007-published-course-revisions.md). Public implemented operations are
+defined by the served OpenAPI, now including the guarded S3-05 boundary. This file is not a substitute for it.
+
+## 1. S3-02 internal foundation boundary
+
+S3-02 is implemented locally as an internal foundation, not a refund/payout HTTP release.
+The implementation, indexes, service interfaces and verification are recorded in
+[S3-02 evidence](sprint_3_financial_foundation.md). The following table defines its scope;
+S3-03 through S3-08 are implemented as noted below; S3-09 onward remain unimplemented design contracts.
+
+| Layer | Foundation work | Must not do |
+| --- | --- | --- |
+| Mongoose | FinancialPolicyVersion, Refund, Payout, PayoutItem, InstructorFinanceState, FinancialHold, AdminAuditEvent; additive guarded metadata on Order/Payment/EarningEntry/Enrollment | Rewrite amounts, drop existing indexes, seed active production policy without deployment review |
+| Zod | Reusable exact EGP/safe integer/ObjectId/policy version/key/reason/date-window validation in owning modules; server-only normalized provider evidence | Trust client money, use Joi/Yup or invent HTTP endpoint schemas for unimplemented handlers |
+| Services/utils | Money aggregation, immutable fingerprint, financial transition/claim guards, clock injection and audit with transaction session | Call a provider in a retryable transaction or create background money effects at import/startup |
+| Controller/routes | None required by this foundation story | Add a Swagger operation just because its schema exists |
+| Tests | Model sign/index/uniqueness/immutability, transaction rollback and concurrent claims; no internet dependency | Use development DB or treat a mocked refund as a real provider proof |
+
+No new environment value or runtime policy row is installed by S3-01/S3-02. The 14-day selection
+is explicit design input; activation later is versioned and deployed, not a hidden default.
+
+## 2. Shared planned HTTP conventions
+
+- `/api/v1`, success `{data,message?}`, error `{error:{code,message,details:[]}}`.
+- Existing auth and current active role/session checks, noStore for private/financial reads
+  and mutations, bounded rate limits. Do not trust JWT role alone for a dangerous transition.
+- Zod strict object schemas; reject unknown fields and control/format characters in reasons.
+  IDs are 24-hex ObjectIds. Reasons are trimmed plain text, 10–500 characters. No arbitrary
+  URLs, raw provider payloads, client actor IDs or timestamps in mutation bodies.
+- `Idempotency-Key`: 16–128 ASCII letters/digits/hyphen/underscore/dot, case-sensitive; callers
+  generate sufficient entropy. Fingerprint normalizes the validated body/resource/action.
+  Same actor/action/key + different fingerprint returns 409 `IDEMPOTENCY_CONFLICT`.
+- The scope includes the action, not merely the actor: creation and mark-paid must not share
+  an accidental uniqueness bucket. Creation key is stored on Refund/Payout; transition replay
+  can use an immutable audited command receipt with a partial unique(actorId,action,key).
+  Its result is a safe DTO snapshot, not provider secrets. Successful repeated requests return
+  that original accepted result before rejecting an old expectedRevision.
+- `expectedRevision`: integer 0..MAX_SAFE_INTEGER, required for admin/resource state mutations.
+  Compare-and-swap conflicts return 409 `STATE_CONFLICT`; the client reloads instead of retrying
+  arbitrary conflicting changes. A create request has no resource revision yet.
+- Date filters: UTC ISO timestamps, half-open `[from,to)`, `from<to`, max query range 366 days;
+  historical detail remains accessible by ID. Lists use limit 1–100, default 20, stable
+  createdAt+id cursor bound to the filter set; reject malformed/stale-filter cursors as 400.
+  Existing Sprint 1/2 page/limit endpoints remain backward-compatible, not silently converted.
+- 400 `VALIDATION_ERROR`, 401 `AUTHENTICATION_REQUIRED`, 403 `INSUFFICIENT_PERMISSIONS`,
+  404 for missing/non-owned resources, 409 domain conflicts, 413 oversized body, 429 Retry-After,
+  safe 503 operational unavailability and 500 generic failure. Do not change validation to 422.
+
+## 3. First product contracts to implement after foundation
+
+### S3-03 admin users
+
+Implemented locally; [behavior and verification](sprint_3_admin_users.md). Directory
+pagination uses signed createdAt/id cursors bound to normalized filters. Status changes
+use the status-specific revision; same-state no-op requires the current revision, stale
+revision always conflicts. No Idempotency-Key is introduced for this operation.
+
+- `GET /admin/users`: optional q (1–100 safe chars; email/name prefix, escaped not raw regex),
+  role (student/instructor/admin), status (active/suspended), cursor/limit. Response
+  `{data:{users:[{id,name,email,roles,status,instructorStatus,revision}],pagination:{nextCursor,hasMore}}}`.
+- `GET /admin/users/:userId`: same safe user fields + timestamps, no password/token fields.
+- `PATCH /admin/users/:userId/status`: `{status,reason,expectedRevision}`. Response
+  `{data:{user},message}` after commit; identical no-op is explicit and cannot invalidate
+  unrelated sessions twice. No body roles/email/tokenVersion.
+- `409 LAST_ACTIVE_ADMIN`/`SELF_SUSPENSION_NOT_ALLOWED` are protected transitions. Existing
+  suspension Auth errors remain compatible. Audit/session invalidation commit with state.
+
+### S3-04 archive / legal-security access policy
+
+Implemented locally; [behavior and verification](sprint_3_course_access.md). Policy revision
+is exposed by current course reads; same-state no-op needs the current revision, stale
+revisions always conflict. Archive admits published/unavailable courses and keeps existing
+active paid/free entitlements. An explicit block overrides media review privileges; unblock
+never changes archive or unavailableAt. There is no unarchive operation.
+
+- `POST /admin/courses/:courseId/archive`: `{reason,expectedRevision}` → 200 `{data:{course}}`.
+- `PATCH /admin/courses/:courseId/access-policy`: `{accessStatus:"available"|"blocked",reason,
+  expectedRevision}` → 200 safe course DTO. Raw legal reason is admin-only; learners get a
+  non-sensitive availability code. Unblock never unarchives or resurrects unavailable media.
+- Existing library/playback/PDF/progress/catalog/Checkout routes share the access table from
+  the plan. No new unarchive/delete capability is implied by these routes.
+
+### S3-05 full refund request
+
+Implemented locally with [S3-05 evidence](sprint_3_refund_requests.md). Default application
+Stripe monetary issuance defaults to disabled (`REFUND_PROCESSING_ENABLED=false`); new POST
+returns 503 REFUND_PROCESSING_NOT_ENABLED. S3-06 now implements signed financial events,
+atomic ledger/access finalization and recovery through the existing inbox; see
+[implementation and activation boundaries](sprint_3_refund_finalization.md).
+No active policy or legacy backfill is introduced automatically. Supported reads are live keyset pages by status/orderId with
+limit 1–100/default20; opaque cursor binds those filters. Safe GET DTO adds updatedAt,
+completedAt and allowlisted failureCode to the accepted DTO, with current status.
+
+- `POST /admin/orders/:orderId/refunds`, key header required, strict body
+  `{reason,overrideWindow?:boolean}` (default false). No client amount/payment/provider ID.
+- Fresh success → 202 `{data:{refund:{id,orderId,amountMinor,currency,status,createdAt}},message}`.
+  Replay returns the same accepted receipt, even if the worker finished since then; GET shows
+  current state. 202 and redirect never revoke enrollment by themselves.
+- `GET /admin/refunds` and `/admin/refunds/:refundId` return current state/safe timestamps/
+  sanitized failure code and pagination. Provider secret/lease/raw request are never DTO fields.
+- Planned domain errors: `REFUND_WINDOW_EXPIRED`, `REFUND_NOT_ALLOWED`,
+  `REFUND_IN_PROGRESS`, `REFUND_ALREADY_COMPLETED`, `FINANCIAL_RECONCILIATION_REQUIRED`.
+  Use status 409 for invalid state; role failures stay 403. Unknown provider outcome after
+  durable acceptance is shown as pending/reconciliation, not a false "refund failed" 503.
+
+The existing signed raw-body `/webhooks/stripe` route/inbox now discriminate Checkout,
+Refund, Charge and Dispute evidence. Provider `succeeded` is distinct from creation/pending/requires_action.
+[Stripe Refund object](https://docs.stripe.com/api/refunds/object).
+
+### S3-07 paid/free reentry and owner reads
+
+Implemented locally with [source-proof/retained-progress evidence](sprint_3_repurchase.md).
+OpenAPI 1.5.0 defines paid repurchase through existing Checkout and explicit now-free
+reactivation through free enrollment. Same enrollment/history, new paid source or null free
+source; independent revocations remain blocked and an old event cannot revoke a newer grant.
+Library returns a coarse refund/restricted reason; owner/admin order reads include a safe
+latestRefund summary. No force-reactivate endpoint, client source field or provider-secret
+DTO is introduced. Real Staging B12 acceptance remains separate.
+
+### S3-08 internal eligibility and signed carry-forward
+
+Implemented locally with [dated proof/hold/carry-forward evidence](sprint_3_earnings_eligibility.md).
+No new HTTP controller/route/DTO or auth namespace: OpenAPI stays 1.5.0. The server's bounded
+worker promotes a pending sale only from its original trusted confirmation/policy/deadline,
+under the shared instructor guard and without financial holds/refunds/inbox/dependent debt.
+The internal preview includes old/current negative balances and cannot use a positive
+cutoff to hide known debt. A complete-set capacity error returns no truncated total.
+CLI is dry-run by default; no force eligibility, current-policy mapping or transfer command.
+S3-09 must recompute/reserve under its own financial transaction; a preview is never authority.
+
+## 4. Downstream contracts / freeze gates
+
+The plan's route inventory remains the downstream target for S3-09–17. Before each owning
+Story starts, freeze its complete request/DTO/error/state examples using the ADR invariants:
+
+- S3-09/10: preview is not a reservation. Create payout from instructorId/month/cutoff/key,
+  no amount/items. Submit/seal, mark-paid and cancellation use expectedRevision and scoped key;
+  mark-paid adds normalized method/reference/confirmedAmountMinor. Unknown transfer resolution
+  requires audited evidence, not a freely editable payout status.
+- S3-11/12: define grossSales/netSales/refunds/commissionNet/earnedNet/pending/eligible/
+  reserved/paid/debt/holds, with EGP/range/asOf, no join duplication or overflow.
+- S3-13/14: use the plan's candidate routes, with admin corrections route replacing the
+  tentative instructor direct-corrections path. All candidate mutations require the course/
+  revision/section/lesson association and expectedRevision. No live ID cross-write loophole.
+
+This freeze process is incremental, not a claim that unimplemented downstream operations
+are ready for frontend calls. FE3 reviews the draft contract; the maintained public contract
+is [OpenAPI](openapi.yaml), containing only implemented operations.

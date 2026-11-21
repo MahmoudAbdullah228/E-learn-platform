@@ -3,10 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { logger, serializeError } from '../config/logger.js';
 import { WebhookEvent } from '../models/WebhookEvent.js';
 import { createPaymentFulfillmentService } from '../modules/payments/paymentFulfillment.service.js';
+import { createRefundFulfillmentService } from '../modules/refunds/refundFulfillment.service.js';
 
 const leaseMs = 120_000;
 const maxAttempts = 8;
-const terminalCodes = new Set(['PAYMENT_EVIDENCE_MISMATCH']);
+const terminalCodes = new Set(['PAYMENT_EVIDENCE_MISMATCH', 'REFUND_EVIDENCE_MISMATCH', 'REFUND_LEDGER_REQUIRES_REVIEW']);
 
 // Cancellation detaches an outstanding SDK read. It cannot stop Stripe's request, but it
 // prevents its late result from reaching fulfillment or writing retry state after shutdown.
@@ -21,7 +22,8 @@ function abortable(operation, signal) {
 }
 
 export function createPaymentWebhookWorker({ provider, clock = () => new Date(),
-  fulfillment = createPaymentFulfillmentService({ clock }), shutdownTimeoutMs = 10_000 } = {}) {
+  fulfillment = createPaymentFulfillmentService({ clock }), refundFulfillment = createRefundFulfillmentService({ clock }),
+  shutdownTimeoutMs = 10_000 } = {}) {
   let timer;
   let running;
   const controller = new AbortController();
@@ -40,9 +42,17 @@ export function createPaymentWebhookWorker({ provider, clock = () => new Date(),
       writeConcern: { w: 'majority' } }).select('+payload +leaseId');
     if (!job || signal.aborted) return false;
     try {
-      const current = await abortable(() => provider.retrieveCheckoutSession(job.payload.sessionId), signal);
-      signal.throwIfAborted();
-      await fulfillment.fulfill({ job, current, signal });
+      if (job.payload.kind === 'refund') {
+        const current = await abortable(() => provider.retrieveRefundObservation({ providerRefundId: job.payload.providerRefundId,
+          paymentIntentId: job.payload.paymentIntentId }, { signal }), signal);
+        signal.throwIfAborted(); await refundFulfillment.fulfill({ job, current, signal });
+      } else if (['charge', 'dispute'].includes(job.payload.kind)) {
+        const current = await abortable(() => provider.retrieveFinancialSafetyObservation(job.payload, { signal }), signal);
+        signal.throwIfAborted(); await refundFulfillment.fulfill({ job, current, signal });
+      } else {
+        const current = await abortable(() => provider.retrieveCheckoutSession(job.payload.sessionId), signal);
+        signal.throwIfAborted(); await fulfillment.fulfill({ job, current, signal });
+      }
     } catch (error) {
       if (signal.aborted) return false; // Leave lease for recovery; shutdown is not a failed attempt.
       if (error?.code === 'PAYMENT_EVENT_LEASE_LOST') return false;
@@ -50,7 +60,7 @@ export function createPaymentWebhookWorker({ provider, clock = () => new Date(),
       const failedAt = clock();
       const terminal = terminalCodes.has(error?.code) || job.attempts + 1 >= maxAttempts;
       const safeCode = terminalCodes.has(error?.code) ? error.code
-        : error?.code === 'PAYMENT_EVIDENCE_PENDING' ? error.code : 'PAYMENT_PROCESSING_FAILED';
+        : ['PAYMENT_EVIDENCE_PENDING', 'REFUND_ASSOCIATION_PENDING'].includes(error?.code) ? error.code : 'PAYMENT_PROCESSING_FAILED';
       await WebhookEvent.updateOne({ _id: job._id, status: 'processing', leaseId,
         leaseUntil: { $gt: failedAt } }, { $inc: { attempts: 1 }, $set: {
         status: terminal ? 'failed' : 'pending', lastError: safeCode,

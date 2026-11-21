@@ -21,6 +21,9 @@ identifier alone does not identify uncommitted code. Do not test an unidentified
   Refer to `.env.example` and the provider ADR; never paste actual values into evidence.
 - Provider webhooks must reach the deployed API. Stripe uses `/api/v1/webhooks/stripe`;
   Mux uses `/api/v1/webhooks/video`. Preserve raw bytes and the provider signature header.
+  For an S3-06 deployment, configure all 13 Test snapshot types listed in the
+  [refund runbook](sprint_3_refund_finalization.md). Issuance stays disabled by default;
+  reviewed policy activation and Sprint 3 financial acceptance are separate requirements.
 - Agree an external asset budget, cleanup owner and test window before any real uploads.
   Mux test assets have short-lived proof limitations; do not claim long-course coverage.
 - Back up the staging database and record a restoration drill. Restrict operator CLI access.
@@ -49,6 +52,9 @@ resolve them through an audited repair plan. Never disable an index merely to st
 
 Use `seed:admin` with explicit private credentials and `seed:categories` for baseline data.
 Seeds target the configured application database, **not automatically the test database**.
+Admin seed refuses suspended accounts. For an existing active admin it preserves roles
+and rotates credentials with session/reset-token invalidation; use the audited admin status
+API for reactivation. Do not use bootstrap credentials as a status-management shortcut.
 Do not run them until its identity is confirmed. Create all other demo records through the API:
 
 1. Register and verify four different controlled mailboxes: instructor applicant, paid

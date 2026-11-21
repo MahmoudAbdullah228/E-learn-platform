@@ -57,7 +57,10 @@ export function createStagingOperationsService({ database, clock = () => new Dat
         ['created', 'processing', 'failed'], now);
       const mediaCleanup = await summarizeCleanup(database.collection('mediacleanupjobs'), now);
       const videoCleanup = await summarizeCleanup(database.collection('videocleanupjobs'), now);
-      return { observedAt: now.toISOString(), webhooks, payments, mediaCleanup, videoCleanup };
+      const refunds = await summarizeStatuses(database.collection('refunds'),
+        ['requested', 'processing', 'pending', 'requires_reconciliation'], now);
+      const payouts = await summarizeStatuses(database.collection('payouts'), ['draft', 'pending'], now);
+      return { refunds, payouts, observedAt: now.toISOString(), webhooks, payments, mediaCleanup, videoCleanup };
     },
   };
 }

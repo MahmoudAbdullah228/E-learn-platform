@@ -8,6 +8,9 @@ export function createOrderController({ orderService }) {
         orderId: req.validatedParams.orderId }) });
     },
     async listAdmin(req, res) { res.json({ data: await orderService.listAdmin(req.validatedQuery) }); },
-    async getAdmin(req, res) { res.json({ data: await orderService.getAdmin(req.validatedParams.orderId) }); },
+    async getAdmin(req, res) {
+      res.json({ data: await orderService.getAdmin({ orderId: req.validatedParams.orderId,
+        adminId: req.auth.userId, ...req.validatedQuery }) });
+    },
   });
 }

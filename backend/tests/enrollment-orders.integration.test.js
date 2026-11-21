@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, before, beforeEach, test } from 'node:test';
 
 import bcrypt from 'bcrypt';
@@ -19,6 +20,7 @@ import { MediaAsset } from '../src/models/MediaAsset.js';
 import { Order } from '../src/models/Order.js';
 import { Payment } from '../src/models/Payment.js';
 import { RefreshSession } from '../src/models/RefreshSession.js';
+import { Refund } from '../src/models/Refund.js';
 import { Section } from '../src/models/Section.js';
 import { User } from '../src/models/User.js';
 import { WebhookEvent } from '../src/models/WebhookEvent.js';
@@ -50,18 +52,21 @@ const provider = createStripePaymentProvider({ secretKey: 'sk_test_fixture', web
   } } } });
 const app = createApp({ paymentProvider: provider });
 const models = [LessonProgress, Enrollment, Order, Payment, EarningEntry, WebhookEvent, Lesson, Section,
-  MediaAsset, Course, Category, RefreshSession, User];
+  MediaAsset, Course, Category, RefreshSession, Refund, User];
 let ready = false;
 before(async () => {
   await connectDatabase({ maxRetries: 1 }); assert.match(mongoose.connection.name, /_test$/);
   await Promise.all(models.map(Model => Model.init())); ready = true;
 });
+const clear = () => Promise.all(models.map(Model => Model.collection.deleteMany({})));
 beforeEach(async () => {
-  await Promise.all(models.map(Model => Model.deleteMany({}))); sessions.clear(); providerCalls = 0;
+  assert.ok(ready && mongoose.connection.readyState === 1);
+  assert.match(mongoose.connection.name, /_test$/);
+  await clear(); sessions.clear(); providerCalls = 0;
 });
 after(async () => {
   try {
-    if (ready && mongoose.connection.readyState === 1) await Promise.all(models.map(Model => Model.deleteMany({})));
+    if (ready && mongoose.connection.readyState === 1) await clear();
   } finally { await disconnectDatabase(); }
 });
 async function actor(email, roles = ['student']) {
@@ -256,11 +261,59 @@ test('paid fulfillment appears in library and polling, with safe admin-only fina
   const detail = await read(`/admin/orders/${order.id}`, admin.token).expect(200);
   assert.equal(detail.body.data.order.studentId, data.student.user.id);
   assert.equal(detail.body.data.order.instructorAmountMinor, order.instructorAmountMinor);
-  assert.equal(detail.body.data.payment.paymentIntentId, undefined);
+  assert.equal(detail.body.data.payment.paymentIntentId, `pi_${order.id}`);
+  assert.equal(detail.body.data.payment.checkoutSessionId, `cs_test_${order.id}`);
+  assert.equal(studentRead.body.data.payment.paymentIntentId, undefined);
+  assert.equal(studentRead.body.data.payment.checkoutSessionId, undefined);
+  assert.deepEqual(detail.body.data.refunds, []);
   const list = await read(`/admin/orders?status=paid&studentId=${data.student.user.id}&courseId=${data.course.id}`, admin.token)
     .expect(200);
   assert.equal(list.body.data.pagination.total, 1);
   await read(`/admin/orders/${new mongoose.Types.ObjectId()}`, admin.token).expect(404);
+});
+
+test('admin order details page a redacted refund history without sharing gateway references with the student', async () => {
+  const data = await fixture(); const order = await pendingPurchase(data); await pay(order);
+  const payment = await Payment.findOne({ orderId: order.id });
+  const admin = await actor('order-refunds-admin@example.test', ['admin']);
+  const other = await actor('order-refunds-other@example.test', ['admin']);
+  const createdAt = new Date();
+  const base = { orderId: order.id, paymentId: payment.id, instructorId: order.instructorId, createdAt,
+    kind: 'full', amountMinor: order.amountMinor, paymentAmountMinor: order.amountMinor, currency: 'EGP' };
+  const failed = await Refund.create({ ...base, source: 'admin', initiatedBy: admin.user.id,
+    status: 'failed', idempotencyKey: randomUUID(), providerIdempotencyKey: `refund_${randomUUID()}`,
+    requestFingerprint: 'e'.repeat(64), reason: 'Private administrative refund note', providerRefundId: 're_failed_attempt' });
+  const pending = await Refund.create({ ...base, source: 'provider', status: 'pending', providerRefundId: 're_pending_attempt' });
+  // A legacy value resembling a client secret must not pass the provider reference allowlist.
+  await Payment.updateOne({ _id: payment.id }, { $set: { paymentIntentId: 'pi_existing_secret_hidden' } });
+  const path = `/admin/orders/${order.id}`;
+  const calls = providerCalls;
+  const first = (await read(`${path}?refundLimit=1`, admin.token).expect(200).expect('Cache-Control', 'no-store')).body.data;
+  assert.equal(first.payment.paymentIntentId, null);
+  assert.equal(first.payment.checkoutSessionId, `cs_test_${order.id}`);
+  assert.equal(first.order.latestRefund.id, pending.id);
+  assert.equal(first.refunds[0].providerRefundId, 're_pending_attempt');
+  const cursor = first.refundPagination.nextCursor;
+  assert.ok(cursor);
+  const next = (await read(`${path}?refundLimit=1&refundCursor=${cursor}`, admin.token).expect(200)).body.data;
+  assert.equal(next.order.latestRefund.id, pending.id);
+  assert.equal(next.refunds[0].id, failed.id);
+  assert.deepEqual(next.refundPagination, { hasMore: false, nextCursor: null });
+  assert.equal(next.refunds[0].providerRefundId, 're_failed_attempt');
+  for (const hidden of ['reason', 'initiatedBy', 'paymentId', 'idempotencyKey', 'providerIdempotencyKey', 'requestFingerprint']) {
+    assert.equal(Object.hasOwn(next.refunds[0], hidden), false);
+  }
+  assert.equal(JSON.stringify(next).includes('secret_hidden'), false);
+  await read(`${path}?refundCursor=${cursor}`, other.token).expect(400);
+  await read(`${path}?refundLimit=101`, admin.token).expect(400);
+  await read(path, data.student.token).expect(403);
+  const student = (await read(`/users/me/orders/${order.id}`, data.student.token).expect(200)).body.data;
+  assert.equal(student.refunds, undefined);
+  assert.equal(student.order.latestRefund.providerRefundId, undefined);
+  assert.equal(student.payment.checkoutSessionId, undefined);
+  const list = (await read('/admin/orders', admin.token).expect(200)).body.data;
+  assert.equal(list.orders[0].latestRefund.providerRefundId, undefined);
+  assert.equal(providerCalls, calls);
 });
 
 test('all private routes require live verified sessions and reject query/parameter injection', async () => {
