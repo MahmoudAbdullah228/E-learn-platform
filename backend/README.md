@@ -425,3 +425,7 @@ The OpenAPI contract for the implemented stories is in `docs/openapi.yaml`.
 S2-12 handoff preparation: [staging acceptance runbook](docs/staging-acceptance.md) and
 [delivery evidence](docs/staging-evidence.md). Real provider/browser acceptance must be
 executed and recorded separately before closing Sprint 2; automated tests are not that proof.
+
+### Financial operations and restore rehearsal
+
+See the [Sprint 3 operations runbook](docs/sprint_3_financial_operations.md) for financial preflight, additive index rollout, cursor-based sales migration, operational readiness and isolated backup recovery.

@@ -16,6 +16,8 @@ import { FinancialHold } from '../src/models/FinancialHold.js';
 import { FinancialPolicyVersion } from '../src/models/FinancialPolicyVersion.js';
 import { InstructorFinanceState } from '../src/models/InstructorFinanceState.js';
 import { InstructorApplication } from '../src/models/InstructorApplication.js';
+import { checkFinancialData, financialIndexes } from '../src/modules/operations/financialPreflight.service.js';
+import { migrateSales } from '../src/modules/operations/saleMigration.service.js';
 import { Order } from '../src/models/Order.js';
 import { Payment } from '../src/models/Payment.js';
 import { Payout } from '../src/models/Payout.js';
@@ -775,4 +777,37 @@ test('malformed legacy eligible balances are visible as blocked review and canno
   await Order.collection.updateOne({ _id: f.order._id }, { $set: { policyVersionId: null } });
   const result = await balance(f); assert.equal(result.blocked, true); assert.ok(result.reasonCodes.includes('EARNINGS_LEGACY_REQUIRES_REVIEW'));
   assert.equal((await stored(f.sale.id)).status, 'eligible'); assert.equal(await FinancialHold.countDocuments(), 0);
+});
+
+test('financial migration resumes after a page, backfills trusted deadlines and preserves unresolved sales', async () => {
+  const valid = await fixture({ missingDate: true });
+  const legacy = await fixture({ missingDate: true });
+  await Order.collection.updateOne({ _id: legacy.order._id }, { $unset: { paymentConfirmedAt: 1 } });
+  const preview = await migrateSales({ limit: 2 });
+  assert.equal(preview.backfill, 1);
+  assert.equal(preview.review, 1);
+  assert.equal((await stored(valid.sale.id)).eligibleAt, null);
+  assert.equal(await FinancialHold.countDocuments(), 0);
+  const page = await migrateSales({ limit: 1, apply: true });
+  assert.equal(page.nextAfter, valid.sale.id);
+  const resumed = await migrateSales({ limit: 1, after: page.nextAfter, apply: true });
+  assert.equal(resumed.nextAfter, null);
+  assert.equal((await stored(valid.sale.id)).eligibleAt.getTime(), valid.deadline.getTime());
+  assert.equal((await stored(legacy.sale.id)).eligibleAt, null);
+  assert.equal((await migrateSales({ apply: true })).backfill, 0);
+  assert.equal(await FinancialHold.countDocuments({ resolvedAt: null }), 1);
+  assert.equal(await AdminAuditEvent.countDocuments({ action: 'financial_hold.opened' }), 1);
+});
+
+test('financial preflight detects orphan and fractional legacy records and leaves indexes intact', async () => {
+  const f = await fixture();
+  const initial = await financialIndexes({ apply: false });
+  assert.deepEqual(initial.conflicts, []);
+  assert.equal(initial.blocked, false);
+  await EarningEntry.collection.updateOne({ _id: f.sale._id }, { $set: {
+    amountMinor: 0.5, orderId: new mongoose.Types.ObjectId() } });
+  const report = await checkFinancialData();
+  assert.equal(report.unsafe.EarningEntry, 1);
+  assert.equal(report.orphans['EarningEntry.orderId'], 1);
+  assert.equal((await financialIndexes({ apply: true })).blocked, true);
 });

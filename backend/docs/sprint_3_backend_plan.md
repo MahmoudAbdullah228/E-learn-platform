@@ -402,6 +402,9 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 ### S3-15 — Migrations والمراقبة والنسخ والاستعادة (6–8 ساعات)
 
+تنفيذ محلي وتجربة استعادة على replica set موثّقان في [دليل التشغيل](sprint_3_financial_operations.md). اعتماد RPO/RTO والمصالحة الخارجية على Staging ضمن بوابة S3-16.
+
+
 - Models/config: indexes/leases/health metrics لا endpoints عامة حساسة. Zod: env/job limits وCLI args؛ Services/utils: dry-run/apply/reconcile وsanitized operational reports.
 - توثيق runbooks لrefund unknown/transfer unknown/backlog/index rollout/rollback/backup restore؛ الفصل بين readiness ولiveness.
 - قبول: migration idempotent، restore في DB معزول ومطابقة counts/snapshots، stop/start لا فقد ولا double claim، secrets لا تدخل Git أو evidence.

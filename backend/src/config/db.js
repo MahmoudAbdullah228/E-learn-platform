@@ -17,6 +17,17 @@ function normalizeMongoDatabaseIdentity(databaseUri) {
   }
 }
 
+export function mongoDatabaseName(uri) {
+  return new mongoose.mongo.MongoClient(uri).options.dbName;
+}
+
+export function assertApplicationDatabase(databaseUri) {
+  if (mongoDatabaseName(databaseUri).toLowerCase().endsWith('_restore')) {
+    throw new Error('Recovery databases are isolated from application processes');
+  }
+  assertSafeTestDatabase(databaseUri);
+}
+
 function assertSafeTestDatabase(databaseUri) {
   if (env.NODE_ENV !== 'test') {
     return;
@@ -37,7 +48,7 @@ function assertSafeTestDatabase(databaseUri) {
 }
 
 export async function connectDatabase({ maxRetries = 5, retryDelayMs = 1000, signal } = {}) {
-  assertSafeTestDatabase(env.DATABASE_URI);
+  assertApplicationDatabase(env.DATABASE_URI);
 
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     signal?.throwIfAborted();
