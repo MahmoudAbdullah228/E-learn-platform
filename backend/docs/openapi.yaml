@@ -3,53 +3,23 @@ info:
   title: E-Learning Marketplace API
   version: 1.11.0
   description: |
-    Stories 1.1 through 2.4: foundation, registration/email verification,
-    session management, secure password reset, basic user profiles, and
-    instructor applications with administrative review, draft courses, ordered curricula,
-    secure Mux direct-video uploads with signed webhook processing, and Sprint 2 content
-    fields, reviewed instructor links, and public instructor profiles.
-    S2-03 adds signed Cloudinary upload intents, provider-verified confirmation,
-    and asynchronous media deletion for avatars, draft covers, and one lesson PDF.
-    S2-04 adds public active-category discovery and admin create, edit, archive,
-    and reactivate operations. Archived categories keep existing course references.
-    S2-05 adds course submission, administrative review and publication with
-    readiness checks, rejection reasons, and audit events.
-    S2-06 adds public published-course catalog and details with prefix title search.
-    S2-07 adds Stripe Test Checkout with immutable financial snapshots.
-    S2-08 adds a signed durable payment inbox and atomic payment/enrollment/earnings fulfillment.
-    S2-09 adds free enrollment, the owner's library/learning outline, owner-only order polling,
-    and admin order reads. S2-10 adds authorized signed video playback and temporary private PDF downloads.
-    S2-11 adds enrollment-bound lesson completion/resume and dynamic progress reads.
-    S3-03 adds admin-only user search/detail and transactional suspension/reactivation,
-    audited with current session checks and protection against losing usable administrators.
-    S3-04 adds audited course archive and independent legal/security access policy.
-    Archived courses retain active learner access but reject discovery, preview and new enrollment.
-    Access blocks deny new credentials for learners and reviewers alike; unblock never republishes.
-    S3-05 adds durable admin full-refund request/read contracts and a tested Stripe adapter.
-    S3-06 adds signed refund/charge/dispute events, atomic full-refund accounting/access,
-    bounded read-only recovery, and policy/confirmation snapshots on new paid purchases.
-    REFUND_PROCESSING_ENABLED defaults to false; explicit operator activation and reviewed policy are required.
-    Legacy orders without frozen policy/trusted confirmation are never guessed from paidAt.
-    S3-07 adds source-fenced paid repurchase and now-free reactivation after a confirmed full refund,
-    retaining the enrollment/progress identity and recomputing progress against current lessons.
-    Owner order reads include the latest safe refund summary; library reads distinguish refunded access.
-    S3-08 adds internal dated earnings eligibility and signed carry-forward checks, without new HTTP operations.
-    S3-09 adds admin settlement preview and atomic payout draft reservation with signed carry-forward.
-    S3-10 seals payout drafts and records externally verified settlement outcomes.
-    S3-11 adds instructor-owned sales, earnings, balances and payout statements.
-    S3-12 adds admin metrics, instructor earnings filters and administrator-only order references.
-    S3-13 adds isolated published-course revision editing, private review media and audited text corrections.
-    S3-14 adds candidate submission, admin comparison, rejection and atomic publication.
-    Register with a mailbox you control, copy the token from the verification email,
-    then POST it to /auth/verify-email. Tokens expire after 24 hours.
-    Resend returns 202 when the request is queued, not when email arrives.
-    A registration 503 EMAIL_DELIVERY_UNAVAILABLE means the account was created but delivery failed;
-    offer resend instead of registering it again. All errors use the shared error envelope.
-    Login, refresh, and logout require an allowed Origin, or Referer when Origin is absent.
-    CLI clients must send an allowed Origin explicitly. Configure the local Swagger origin too.
-    Coordinate refresh requests; simultaneous reuse revokes the device family and its access tokens.
-    Forgot-password always returns the same accepted response. Reset links expire after 30 minutes,
-    work once, and invalidate all existing sessions after a successful password change.
+    Students browse courses, enroll and track progress. Instructors build courses and submit them for review.
+    Administrators approve publication, manage refunds and record settlements. All paths below use `/api/v1`.
+
+    **Try the API**
+
+    Browse published courses with `GET /courses`. To try a protected endpoint:
+
+    1. Register with a mailbox you control. Send the emailed token to `POST /auth/verify-email`.
+    2. Call `POST /auth/login`, copy `data.accessToken` into **Authorize**, then try `GET /users/me`.
+    3. Access tokens last 15 minutes. Browser clients send the HttpOnly refresh cookie with credentials included.
+       Run one refresh request at a time and use the replacement access token for subsequent requests.
+
+    **Reading responses**
+
+    Read successful results from `data`. For errors, use `error.code` to choose the next action,
+    `error.message` for the explanation and `error.details` for field-level feedback when available.
+    **Try it out** sends real requests. Use a test account and Stripe Test Mode.
 servers:
   - url: /api/v1
     description: API on the same host as this documentation
@@ -78,6 +48,8 @@ tags:
     description: Public approved-instructor profiles and owner-managed profile details
   - name: Instructor courses
     description: Instructor-owned course creation, reads, and draft editing
+  - name: Course revisions
+    description: Edit a private copy of a published course and submit it for administrator review.
   - name: Course review
     description: Instructor submissions and administrative publication decisions
   - name: Catalog
@@ -691,13 +663,15 @@ paths:
   /instructor/courses/{courseId}/revisions:
     post:
       operationId: createCourseRevision
+      summary: Start a private revision of a published course
+      description: Edit the candidate while students continue to see the current publication.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
         - { name: courseId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '201':
-          description: createCourseRevision
+          description: New course revision
           content:
             application/json:
               schema:
@@ -715,6 +689,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}:
     get:
       operationId: getCourseRevision
+      summary: Read your course revision
+      description: Read the current revision number before editing the candidate.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -722,7 +698,7 @@ paths:
         - { name: revisionId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '200':
-          description: getCourseRevision
+          description: Current revision state
           content:
             application/json:
               schema:
@@ -739,6 +715,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
     patch:
       operationId: editCourseRevision
+      summary: Edit course details for the next publication
+      description: Send the current expectedRevision with the fields to change.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -751,7 +729,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionMetadataPatch' }
       responses:
         '200':
-          description: editCourseRevision
+          description: Updated revision state
           content:
             application/json:
               schema:
@@ -769,6 +747,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/submit:
     post:
       operationId: submitCourseRevision
+      summary: Submit a revision for admin review
+      description: Submit the edited candidate once its content and media are ready.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -781,7 +761,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: submitCourseRevision
+          description: Submitted revision
           content:
             application/json:
               schema:
@@ -799,6 +779,8 @@ paths:
   /admin/course-revisions/{revisionId}:
     get:
       operationId: getRevisionReviewDetail
+      summary: Compare a revision with the published course
+      description: Review candidate changes and recent decisions before approving or rejecting.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -821,6 +803,8 @@ paths:
   /admin/course-revisions:
     get:
       operationId: listPendingCourseRevisions
+      summary: List revisions awaiting an admin decision
+      description: Follow nextAfter to load the next page of pending revisions.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -843,6 +827,8 @@ paths:
   /admin/course-revisions/{revisionId}/approve:
     post:
       operationId: approveCourseRevision
+      summary: Approve and publish the reviewed revision
+      description: Use the reviewed revision and base content version. Refresh the public course after approval.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -854,7 +840,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionDecision' }
       responses:
         '200':
-          description: approveCourseRevision
+          description: Approved revision
           content:
             application/json:
               schema:
@@ -872,6 +858,8 @@ paths:
   /admin/course-revisions/{revisionId}/reject:
     post:
       operationId: rejectCourseRevision
+      summary: Reject a revision with feedback
+      description: Give the instructor a reason they can address before resubmitting.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -883,7 +871,7 @@ paths:
             schema: { $ref: '#/components/schemas/RejectRevision' }
       responses:
         '200':
-          description: rejectCourseRevision
+          description: Rejected revision
           content:
             application/json:
               schema:
@@ -901,6 +889,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/reopen:
     post:
       operationId: reopenRejectedCourseRevision
+      summary: Reopen a rejected revision for editing
+      description: Use the latest revision number to resume editing after reviewer feedback.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -913,7 +903,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: reopenRejectedCourseRevision
+          description: Reopened revision
           content:
             application/json:
               schema:
@@ -931,6 +921,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/discard:
     post:
       operationId: discardCourseRevision
+      summary: Discard a course revision
+      description: Discard the candidate when its proposed changes are no longer needed.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -943,7 +935,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: discardCourseRevision
+          description: Discarded revision
           content:
             application/json:
               schema:
@@ -961,6 +953,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/sections:
     get:
       operationId: listRevisionSections
+      summary: List sections in a course revision
+      description: Read the candidate outline when building the revision editor.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -969,7 +963,7 @@ paths:
         - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
       responses:
         '200':
-          description: listRevisionSections
+          description: Page of revision sections
           content:
             application/json:
               schema:
@@ -986,6 +980,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
     post:
       operationId: createRevisionSection
+      summary: Add a section to a course revision
+      description: Use the revision editor to add curriculum before resubmission.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -998,7 +994,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionSectionInput' }
       responses:
         '201':
-          description: createRevisionSection
+          description: Section creation result
           content:
             application/json:
               schema:
@@ -1016,6 +1012,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/sections/order:
     put:
       operationId: orderRevisionSections
+      summary: Reorder sections in a course revision
+      description: Use section IDs from the candidate outline when saving the new order.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1028,7 +1026,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionOrderInput' }
       responses:
         '200':
-          description: orderRevisionSections
+          description: Section order update
           content:
             application/json:
               schema:
@@ -1046,6 +1044,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}:
     patch:
       operationId: editRevisionSection
+      summary: Rename a section in a course revision
+      description: Use the section ID from the candidate outline.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1059,7 +1059,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionSectionInput' }
       responses:
         '200':
-          description: editRevisionSection
+          description: Section update
           content:
             application/json:
               schema:
@@ -1076,6 +1076,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
     delete:
       operationId: deleteRevisionSection
+      summary: Remove a section from a course revision
+      description: Review the candidate outline after removing the section.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1089,7 +1091,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: deleteRevisionSection
+          description: Section removal result
           content:
             application/json:
               schema:
@@ -1107,6 +1109,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons:
     get:
       operationId: listRevisionLessons
+      summary: List revision lessons in a section
+      description: Use the section ID from the revision editor to load its lessons.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1116,7 +1120,7 @@ paths:
         - { name: after, in: query, schema: { type: integer, minimum: 0 }, description: Position cursor from nextAfter }
       responses:
         '200':
-          description: listRevisionLessons
+          description: Page of revision lessons
           content:
             application/json:
               schema:
@@ -1133,6 +1137,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
     post:
       operationId: createRevisionLesson
+      summary: Add a lesson to a revision section
+      description: Create the lesson before requesting its video upload.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1146,7 +1152,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionLessonInput' }
       responses:
         '201':
-          description: createRevisionLesson
+          description: Lesson creation result
           content:
             application/json:
               schema:
@@ -1164,6 +1170,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/sections/{sectionId}/lessons/order:
     put:
       operationId: orderRevisionLessons
+      summary: Reorder lessons in a revision section
+      description: Use lesson IDs from this candidate section when saving the order.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1177,7 +1185,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionOrderInput' }
       responses:
         '200':
-          description: orderRevisionLessons
+          description: Lesson order update
           content:
             application/json:
               schema:
@@ -1195,6 +1203,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}:
     patch:
       operationId: editRevisionLesson
+      summary: Edit lesson details in a course revision
+      description: Apply the metadata change to the candidate lesson before submission.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1208,7 +1218,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionLessonPatch' }
       responses:
         '200':
-          description: editRevisionLesson
+          description: Lesson update
           content:
             application/json:
               schema:
@@ -1225,6 +1235,8 @@ paths:
         '503': { $ref: '#/components/responses/ServiceUnavailableError' }
     delete:
       operationId: deleteRevisionLesson
+      summary: Remove a lesson from a course revision
+      description: The published curriculum changes when an admin approves the revision.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1238,7 +1250,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: deleteRevisionLesson
+          description: Lesson removal result
           content:
             application/json:
               schema:
@@ -1256,6 +1268,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/media/upload-intents:
     post:
       operationId: issueRevisionMedia
+      summary: Prepare a revision cover or PDF upload
+      description: Upload the asset directly to Cloudinary using the returned parameters, then confirm it on this revision.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1268,7 +1282,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionIntentInput' }
       responses:
         '201':
-          description: issueRevisionMedia
+          description: Signed upload parameters
           content:
             application/json:
               schema:
@@ -1286,6 +1300,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}/confirm:
     post:
       operationId: confirmRevisionMedia
+      summary: Confirm media uploaded for a revision
+      description: Call after the direct upload finishes. Refresh revision state after successful confirmation.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1299,7 +1315,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: confirmRevisionMedia
+          description: Confirmed revision asset
           content:
             application/json:
               schema:
@@ -1317,6 +1333,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/media/{assetId}:
     delete:
       operationId: detachRevisionMedia
+      summary: Detach media from a revision
+      description: Use the candidate asset ID when removing its cover or attachment.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1330,7 +1348,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '200':
-          description: detachRevisionMedia
+          description: Media detachment result
           content:
             application/json:
               schema:
@@ -1348,6 +1366,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/video-upload:
     post:
       operationId: uploadRevisionVideo
+      summary: Prepare a video upload for a revision lesson
+      description: Send the video directly to Mux using the issued URL and wait for processing before review.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1361,7 +1381,7 @@ paths:
             schema: { $ref: '#/components/schemas/RevisionGuard' }
       responses:
         '201':
-          description: uploadRevisionVideo
+          description: Direct video upload details
           content:
             application/json:
               schema:
@@ -1379,6 +1399,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/playback:
     get:
       operationId: getOwnerRevisionPlayback
+      summary: Preview a revision video as its instructor
+      description: Request fresh playback credentials when opening a candidate lesson in the editor.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1387,7 +1409,7 @@ paths:
         - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '200':
-          description: getOwnerRevisionPlayback
+          description: Temporary playback credentials
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybackResponse' }
@@ -1401,6 +1423,8 @@ paths:
   /instructor/courses/{courseId}/revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
     get:
       operationId: getOwnerRevisionDownload
+      summary: Download a revision PDF as its instructor
+      description: Request a temporary download URL when the instructor opens the attachment.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1410,7 +1434,7 @@ paths:
         - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '200':
-          description: getOwnerRevisionDownload
+          description: Temporary PDF download
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
@@ -1424,6 +1448,8 @@ paths:
   /admin/course-revisions/{revisionId}/lessons/{lessonId}/playback:
     get:
       operationId: getAdminRevisionPlayback
+      summary: Preview a candidate video during admin review
+      description: Request playback credentials for the candidate lesson being reviewed.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1431,7 +1457,7 @@ paths:
         - { name: lessonId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '200':
-          description: getAdminRevisionPlayback
+          description: Temporary review playback credentials
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlaybackResponse' }
@@ -1445,6 +1471,8 @@ paths:
   /admin/course-revisions/{revisionId}/lessons/{lessonId}/attachments/{assetId}/download:
     get:
       operationId: getAdminRevisionDownload
+      summary: Inspect a candidate PDF during admin review
+      description: Request a temporary download URL for the attachment under review.
       tags: [Course revisions]
       security: [{ bearerAuth: [] }]
       parameters:
@@ -1453,7 +1481,7 @@ paths:
         - { name: assetId, in: path, required: true, schema: { type: string, pattern: '^[a-fA-F0-9]{24}$' } }
       responses:
         '200':
-          description: getAdminRevisionDownload
+          description: Temporary review PDF download
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PrivateDownloadResponse' }
@@ -2001,6 +2029,7 @@ paths:
   /courses/{slug}:
     get:
       operationId: getPublishedCourseBySlug
+      description: Use the slug returned by the catalog. Render the public outline and preview flags. A null totalDurationSeconds means the total is unavailable.
       summary: Read published course details and public curriculum
       tags: [Catalog]
       parameters:
@@ -2211,6 +2240,7 @@ paths:
   /media/upload-intents:
     post:
       operationId: createMediaUploadIntent
+      description: Request upload parameters first, then send the file directly to Cloudinary. Keep the asset ID for the confirmation request.
       summary: Create a signed Cloudinary upload intent for an owned target
       tags: [Media]
       security: [{ bearerAuth: [] }]
@@ -2261,6 +2291,7 @@ paths:
   /media/{assetId}/confirm:
     post:
       operationId: confirmMediaUpload
+      description: Call after Cloudinary accepts the upload. Refresh the target profile or course after the API confirms the asset.
       summary: Verify uploaded metadata at Cloudinary and attach media atomically
       tags: [Media]
       security: [{ bearerAuth: [] }]
@@ -2327,6 +2358,7 @@ paths:
   /auth/register:
     post:
       operationId: registerStudent
+      description: Use a mailbox you control. Verification tokens expire after 24 hours. If the API returns EMAIL_DELIVERY_UNAVAILABLE after creating the account, offer to resend verification.
       summary: Register a student account and send its verification email
       tags: [Auth]
       requestBody:
@@ -2398,6 +2430,7 @@ paths:
   /auth/login:
     post:
       operationId: login
+      description: Sign in after email verification. Use data.accessToken for bearer authentication and enable credentials so the browser keeps the refresh cookie.
       summary: Sign in a verified user
       tags: [Auth]
       requestBody:
