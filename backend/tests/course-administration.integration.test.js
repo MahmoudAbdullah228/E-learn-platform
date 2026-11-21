@@ -11,6 +11,7 @@ import { assertTransactionSupport } from '../src/config/transactions.js';
 import { AdminAuditEvent } from '../src/models/AdminAuditEvent.js';
 import { Category } from '../src/models/Category.js';
 import { Course } from '../src/models/Course.js';
+import { RevisionBeforeImage } from '../src/models/RevisionBeforeImage.js';
 import { CourseRevision, RevisionLesson, RevisionSection } from '../src/models/CourseRevision.js';
 import { CourseReviewEvent } from '../src/models/CourseReviewEvent.js';
 import { Enrollment } from '../src/models/Enrollment.js';
@@ -31,7 +32,7 @@ import { createCheckoutService } from '../src/modules/checkout/checkout.service.
 import { createVideoService } from '../src/modules/video/video.service.js';
 import { signAccessToken } from '../src/utils/sessionToken.js';
 
-const models = [MediaCleanupJob, VideoCleanupJob, CourseRevision, RevisionLesson, RevisionSection, AdminAuditEvent, VideoPlaybackLease, VideoAssetState, LessonProgress, CourseReviewEvent,
+const models = [RevisionBeforeImage, MediaCleanupJob, VideoCleanupJob, CourseRevision, RevisionLesson, RevisionSection, AdminAuditEvent, VideoPlaybackLease, VideoAssetState, LessonProgress, CourseReviewEvent,
   Payment, Order, Enrollment, MediaAsset, Lesson, Section, Course, Category, RefreshSession, User];
 const reason = 'Private legal security case reference for administrators';
 let ready = false;
@@ -578,4 +579,135 @@ test('reopen requires a rejected active candidate and the current revision', asy
   const result = (await post(path, { expectedRevision: 1 }).expect(200)).body.data;
   assert.equal(result.status, 'draft');
   assert.equal(result.revision, 2);
+});
+
+async function reviewFixture() {
+  const f = await fixture();
+  const cover = await MediaAsset.create({ ownerId: f.owner.user.id, purpose: 'course_cover', targetId: f.course.id,
+    publicId: 'test-cover', resourceType: 'image', deliveryType: 'upload', status: 'ready',
+    expiresAt: new Date(), providerUploadValidUntil: new Date() });
+  await Course.updateOne({ _id: f.course.id }, { coverAssetId: cover.id });
+  const root = '/api/v1/instructor/courses/' + f.course.id + '/revisions';
+  const call = (method, path, body, actor = f.owner) => request(app)[method](path).auth(actor.token, { type: 'bearer' }).send(body);
+  const row = (await call('post', root, {}).expect(201)).body.data;
+  const editor = root + '/' + row.id;
+  const review = '/api/v1/admin/course-revisions/' + row.id;
+  await call('patch', editor, { priceMinor: 500, expectedRevision: 0 }).expect(200);
+  await call('patch', editor + '/lessons/' + f.lesson.id, { title: 'Revised lesson', expectedRevision: 1 }).expect(200);
+  await call('post', editor + '/submit', { expectedRevision: 2 }).expect(200);
+  return { ...f, call, editor, review, row };
+}
+
+test('revision review freezes edits, shows the diff, publishes once and retains changed rows', async () => {
+  const f = await reviewFixture();
+  await f.call('patch', f.editor, { priceMinor: 900, expectedRevision: 3 }).expect(409);
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 1000);
+  const detail = (await read(f.review, f.admin).expect(200)).body.data;
+  assert.equal(detail.changes.length, 2);
+  assert.equal(JSON.stringify(detail).includes('policy-video-asset'), false);
+  const decision = { baseContentRevision: 0, expectedRevision: 3 };
+  const results = await Promise.all([1, 2].map(() => f.call('post', f.review + '/approve', decision, f.admin)));
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 500);
+  assert.equal((await Lesson.findById(f.lesson.id)).title, 'Revised lesson');
+  assert.equal(await RevisionBeforeImage.countDocuments({ revisionId: f.row.id }), 2);
+});
+
+test('a disabled category or corrected live base blocks approval and a rejection remains auditable', async () => {
+  const f = await reviewFixture();
+  const decision = { baseContentRevision: 0, expectedRevision: 3 };
+  await Category.updateOne({ _id: f.course.categoryId }, { isActive: false });
+  await f.call('post', f.review + '/approve', decision, f.admin).expect(409);
+  await Category.updateOne({ _id: f.course.categoryId }, { isActive: true });
+  await f.call('patch', policyPath(f) + '/corrections', { title: 'Current live title', reason, expectedRevision: 0 }, f.admin).expect(200);
+  await f.call('post', f.review + '/approve', decision, f.admin).expect(409);
+  await f.call('post', f.review + '/reject', { ...decision, reason }, f.admin).expect(200);
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 1000);
+  assert.equal((await read(f.editor, f.owner)).body.data.rejectionReason, reason);
+});
+
+test('checkout reservations keep their accepted price across publication', async () => {
+  const f = await reviewFixture();
+  const buyer = await actor(), laterBuyer = await actor();
+  const checkout = createCheckoutService({ provider: paymentProvider });
+  try {
+    paymentHook = async () => {
+      paymentHook = null;
+      await f.call('post', f.review + '/approve', { baseContentRevision: 0, expectedRevision: 3 }, f.admin).expect(200);
+    };
+    await checkout.checkout({ studentId: buyer.user.id, courseId: f.course.id });
+    await checkout.checkout({ studentId: laterBuyer.user.id, courseId: f.course.id });
+    assert.equal((await Order.findOne({ studentId: buyer.user.id })).amountMinor, 1000);
+    assert.equal((await Order.findOne({ studentId: laterBuyer.user.id })).amountMinor, 500);
+  } finally { await checkout.stop(); }
+});
+
+test('replacing a completed lesson retains its history and computes completion against the new lesson', async () => {
+  const f = await reviewFixture();
+  await progress(f).expect(200);
+  await f.call('post', f.review + '/reject', { baseContentRevision: 0, expectedRevision: 3, reason }, f.admin).expect(200);
+  await f.call('post', f.editor + '/reopen', { expectedRevision: 4 }).expect(200);
+  await f.call('delete', f.editor + '/lessons/' + f.lesson.id, { expectedRevision: 5 }).expect(200);
+  const added = (await f.call('post', f.editor + '/sections/' + f.section.id + '/lessons',
+    { expectedRevision: 6, title: 'Replacement lesson' }).expect(201)).body.data.logicalId;
+  const attempt = randomUUID();
+  await RevisionLesson.updateOne({ revisionId: f.row.id, logicalId: added },
+    { videoAssetId: 'replacement-ready', videoStatus: 'ready', videoUploadAttemptId: attempt });
+  await f.call('post', f.editor + '/submit', { expectedRevision: 7 }).expect(200);
+  await f.call('post', f.review + '/approve', { baseContentRevision: 0, expectedRevision: 8 }, f.admin).expect(200);
+  assert.equal(await Lesson.countDocuments({ _id: f.lesson.id }), 0);
+  assert.equal(await LessonProgress.countDocuments({ lessonId: f.lesson.id }), 1);
+  const outline = (await read(learningPath(f), f.student).expect(200)).body.data;
+  assert.equal(outline.progress.completedAt, null);
+  assert.equal(outline.progress.completedLessons, 0);
+  assert.equal(outline.progress.totalLessons, 1);
+  const video = createVideoService({ videoProvider: { unwrapWebhook: () => ({
+    type: 'video.asset.deleted', data: { id: 'replacement-ready', passthrough: attempt },
+  }) } });
+  assert.equal((await video.handleWebhook({})).handled, true);
+  assert.equal((await Course.findById(f.course.id)).status, 'unavailable');
+});
+
+test('archiving or losing video readiness during review prevents approval', async () => {
+  const f = await reviewFixture();
+  const service = createVideoService({ videoProvider: {} });
+  await service.markAssetUnavailable('policy-video-asset');
+  const revision = await CourseRevision.findById(f.row.id);
+  await f.call('post', f.review + '/approve', { baseContentRevision: 0, expectedRevision: revision.revision }, f.admin).expect(409);
+  await archive(f).expect(200);
+  await f.call('post', f.review + '/approve', { baseContentRevision: 0, expectedRevision: revision.revision }, f.admin).expect(409);
+  assert.equal(await RevisionBeforeImage.countDocuments(), 0);
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 1000);
+});
+
+test('publication rolls back earlier writes when a later before-image cannot be inserted', async () => {
+  const f = await reviewFixture();
+  await RevisionBeforeImage.create({ revisionId: f.row.id, logicalId: f.lesson.id, kind: 'lesson',
+    before: { title: 'Already retained' } });
+  await f.call('post', f.review + '/approve', { expectedRevision: 3, baseContentRevision: 0 }, f.admin).expect(409);
+  assert.equal(await RevisionBeforeImage.countDocuments({ kind: 'course' }), 0);
+  assert.equal((await CourseRevision.findById(f.row.id)).status, 'pending_review');
+  assert.equal((await Course.findById(f.course.id)).priceMinor, 1000);
+  assert.equal((await Lesson.findById(f.lesson.id)).title, 'First Lesson');
+});
+
+test('publication budget counts changed rows across sections and commits the 250-row boundary', async () => {
+  const f = await reviewFixture();
+  // Extend the fixture with ready live/candidate pairs before the budget probe.
+  const section = await Section.create({ courseId: f.course.id, position: 1, title: 'Second section' });
+  await RevisionSection.create({ revisionId: f.row.id, logicalId: section._id, position: 1, title: section.title });
+  const records = Array.from({ length: 249 }, (_, index) => ({
+    sectionId: index < 150 ? f.section._id : section._id, title: 'Live lesson', position: index + 1,
+    videoStatus: 'ready', videoAssetId: 'budget-' + index,
+  }));
+  const live = await Lesson.insertMany(records);
+  await RevisionLesson.insertMany(live.map((item, i) => ({ ...records[i], revisionId: f.row.id,
+    logicalId: item._id, title: 'Edited lesson' })));
+  const decision = { expectedRevision: 3, baseContentRevision: 0 };
+  const denied = await f.call('post', f.review + '/approve', decision, f.admin).expect(409);
+  assert.equal(denied.body.error.code, 'REVISION_TOO_LARGE');
+  await RevisionLesson.updateOne({ revisionId: f.row.id, logicalId: live[0]._id }, { title: 'Live lesson' });
+  await f.call('post', f.review + '/approve', decision, f.admin).expect(200);
+  assert.equal(await RevisionBeforeImage.countDocuments({ revisionId: f.row.id }), 250);
+  assert.equal(await Lesson.countDocuments({ title: 'Edited lesson' }), 248);
 });

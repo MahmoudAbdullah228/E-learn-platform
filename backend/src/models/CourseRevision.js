@@ -10,11 +10,14 @@ export const metadataKeys = ['title', 'categoryId', 'description', 'shortDescrip
   'currency', 'level', 'language', 'requirements', 'learningOutcomes', 'coverAssetId'];
 const metadata = Course.schema.pick(metadataKeys, { _id: false, timestamps: false });
 const revision = new mongoose.Schema({ courseId: id, number: counter, baseContentRevision: counter,
+  rejectionReason: { type: String, default: null, maxlength: 500 },
+  submittedAt: { type: Date, default: null },
   active: { type: Boolean, required: true, default: true },
   status: { type: String, required: true, default: 'draft',
     enum: ['draft', 'pending_review', 'approved', 'rejected', 'discarded'] },
   revision: { ...counter, default: 0 }, metadata: { type: metadata, required: true } }, { timestamps: true });
 revision.index({ 'metadata.coverAssetId': 1 }, { partialFilterExpression: { active: true, 'metadata.coverAssetId': { $type: 'objectId' } } });
+revision.index({ status: 1, _id: -1 });
 revision.index({ courseId: 1, number: 1 }, { unique: true });
 revision.index({ courseId: 1 }, { unique: true, partialFilterExpression: { active: true } });
 

@@ -53,7 +53,7 @@ export function candidateMedia(provider) {
 
   async function remove(row, session, { assetId, auth }) {
     const asset = await MediaAsset.findOne({ _id: assetId, ownerId: auth.userId,
-      status: { $in: ['pending', 'ready'] }, $or: [{ revisionId: row._id }, { revisionId: null }] }).session(session);
+      status: { $in: ['pending', 'ready'] } }).session(session);
     if (!asset || asset.purpose === 'avatar') throw missing();
     const target = await findTarget(row, asset, session);
     if (asset.purpose === 'course_cover' && target.coverAssetId?.equals(asset._id)) {
@@ -61,8 +61,8 @@ export function candidateMedia(provider) {
     } else if (asset.purpose === 'lesson_attachment' && target.attachments.some(id => id.equals(asset._id))) {
       target.attachments = [];
       await target.save({ session });
-    } else if (!asset.revisionId || asset.status !== 'pending') throw missing();
-    if (asset.revisionId) await releaseCandidateAsset(asset, session);
+    } else if (!row._id.equals(asset.revisionId) || asset.status !== 'pending') throw missing();
+    if (row._id.equals(asset.revisionId)) await releaseCandidateAsset(asset, session);
   }
   return { issue, confirm, remove };
 }

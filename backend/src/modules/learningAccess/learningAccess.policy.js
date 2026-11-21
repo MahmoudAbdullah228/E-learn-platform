@@ -79,11 +79,14 @@ export async function resolveLearningAccess({ lessonId, auth, assetId, revisionI
     }
     if (!lesson.attachments.some(id => String(id) === String(assetId))) throw notFound();
     const asset = await read(MediaAsset.findOne({ _id: assetId, targetId: lessonId,
-      revisionId: revisionId ? { $in: [null, revisionId] } : null,
       ownerId: course.instructorId, purpose: 'lesson_attachment', provider: 'cloudinary',
       resourceType: 'raw', deliveryType: 'authenticated', status: 'ready', format: 'pdf',
     }).lean());
     if (!asset) throw notFound();
+    if (asset.revisionId && String(asset.revisionId) !== revisionId
+        && !await read(CourseRevision.exists({ _id: asset.revisionId, courseId: course._id, status: 'approved' }))) {
+      throw notFound();
+    }
     return { lesson, course, asset };
   }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
 }

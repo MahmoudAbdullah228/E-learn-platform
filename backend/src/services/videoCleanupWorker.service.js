@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger, serializeError } from '../config/logger.js';
+import { RevisionBeforeImage } from '../models/RevisionBeforeImage.js';
 import { Lesson } from '../models/Lesson.js';
 import { activeRevisionLessonReferences } from './revisionReferences.service.js';
 import { VideoCleanupJob } from '../models/VideoCleanupJob.js';
@@ -59,7 +60,8 @@ export function createVideoCleanupWorker({
     try {
       const field = job.resourceType === 'asset' ? 'videoAssetId' : 'videoUploadId';
       const resource = { [field]: job.resourceId };
-      if (await Lesson.exists(resource) || await activeRevisionLessonReferences(resource)) {
+      if (await Lesson.exists(resource) || await activeRevisionLessonReferences(resource)
+          || await RevisionBeforeImage.exists({ ['before.' + field]: job.resourceId })) {
         await VideoCleanupJob.updateOne({ _id: job._id, leaseId }, {
           $set: { leaseId: null, availableAt: new Date(clock().getTime() + LEASE_MS) },
         });

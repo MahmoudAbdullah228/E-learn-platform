@@ -48,6 +48,9 @@ S3-12 adds the admin dashboard, scoped finance summaries and safe order referenc
 S3-13 adds isolated published-course revision editing and admin text corrections in OpenAPI **1.10.0**.
 See [the frontend handoff](docs/frontend-handoff.md#instructor-revision-editor).
 
+S3-14 adds transactional publication and revision review in OpenAPI **1.11.0**.
+See [the revision review handoff](docs/frontend-handoff.md#published-course-revision-review-openapi-1110).
+
 ## Requirements
 
 - Node.js 22.13.0 or newer (`.nvmrc` pins Node.js 22.20.0 LTS)

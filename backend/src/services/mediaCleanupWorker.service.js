@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { logger, serializeError } from '../config/logger.js';
+import { RevisionBeforeImage } from '../models/RevisionBeforeImage.js';
 import { Course } from '../models/Course.js';
 import { Lesson } from '../models/Lesson.js';
 import { MediaAsset } from '../models/MediaAsset.js';
@@ -20,6 +21,8 @@ async function stillReferenced(asset) {
   if (asset.purpose === 'avatar') {
     return Boolean(await User.exists({ avatarAssetId: asset._id }));
   }
+  const reference = asset.purpose === 'course_cover' ? 'before.coverAssetId' : 'before.attachments';
+  if (await RevisionBeforeImage.exists({ [reference]: asset._id })) return true;
   if (await revisionReferencesMedia(asset)) return true;
   if (asset.purpose === 'course_cover') {
     return Boolean(await Course.exists({ coverAssetId: asset._id }));

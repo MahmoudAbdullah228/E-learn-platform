@@ -1,6 +1,6 @@
 # ADR 0007 — Isolated published-course candidates
 
-Date: 2026-11-18. Status: **Accepted**. Candidate editing and audited admin text corrections are implemented in S3-13. Atomic publication and review belong to S3-14.
+Date: 2026-11-18. Status: **Accepted**. Candidate editing and audited admin text corrections are implemented in S3-13. S3-14 implements submission, review and atomic publication.
 Product decision: P15–P17 in [the policy register](sprint_3_policy_register.md), selected
 under the user's delegation. Sources: MVP post-publish rule, BR01/02/05/06/09/10 and the
 course-review/learning flowchart. Live access must not disappear during candidate review.
@@ -113,3 +113,18 @@ transition advances it once. A snapshot keeps inherited asset references without
 live upload attempts. Only a candidate's own attempts and Cloudinary intents are eligible
 for cleanup when it is discarded. The owner and admin credential routes recheck membership,
 session and course access after provider work. Discarded snapshots are read-only history.
+
+
+## S3-14 publication and retention
+
+Approval compares the candidate version and frozen live base, revalidates owner, category,
+course access, attachments and videos, and commits the changed live rows, before-images,
+decision and audit in one MongoDB transaction. A logical lesson keeps its identifier.
+The 250-row publication budget counts changed course, section and lesson rows combined.
+The local replica-set boundary test rejected 251, then committed all 250 after one edit
+was reverted. The complete fixture, both requests and assertions took roughly two seconds
+in the local run. Staging performance depends on document sizes and database latency.
+
+Old media referenced by a before-image is retained. Physical removal of that historical
+media requires the O06 retention decision. Existing issued credentials can expire naturally.
+New credentials use current live membership or an active candidate review context.

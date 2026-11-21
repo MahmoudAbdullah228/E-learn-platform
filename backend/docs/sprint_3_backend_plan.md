@@ -393,6 +393,8 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 ### S3-14 — Revision review/apply وتوافق media/progress (8–12 ساعة)
 
+الحالة: منفذة ومختبرة محليًا. عقد التقديم والمراجعة والنشر في OpenAPI 1.11.0. يحتفظ النظام بالميديا التاريخية لحين حسم مدة الاحتفاظ O06.
+
 - Models: revision decisions/history + live revision counters؛ Zod: submit/approve/reject/reason/base revision. Controllers/routes: instructor submit/admin review.
 - Services: readiness recheck ونشر ذري bounded، Mux revision-aware routing، retained media cleanup، dynamic progress وإبطال caches المناسبة.
 - قبول: old live stays أثناء pending/rejected؛ approval لا نصف curriculum ولا lost history؛ price يؤثر في checkout الجديد فقط، pending order يستعمل snapshotه.

@@ -537,3 +537,16 @@ detachment and video uploads. On confirmation or video readiness refresh the rev
 The private playback and attachment download routes exist for both the owner and admin.
 After discard, review credentials are unavailable. Public previews and student downloads
 continue to use the published lesson endpoints.
+
+### Published course revision review (OpenAPI 1.11.0)
+
+The instructor submits the edited revision with POST to its `submit` endpoint and
+the current `expectedRevision`. Admins GET `/admin/course-revisions` (50 pending
+items per page, follow `nextAfter`), then GET `/admin/course-revisions/{revisionId}`
+to compare candidate content to the current live course and view recent decisions.
+POST to `approve` or `reject` with the returned `revision` as `expectedRevision`
+and the candidate's `baseContentRevision`. Rejection also requires a reason of
+10–500 characters. A stale live base requires a fresh candidate before publication.
+After approval refresh course detail, current curriculum and progress. Existing orders
+keep their price snapshots. Publication admits up to 250 changed rows per transaction.
+Superseded content and media are retained pending the O06 rollback retention decision.

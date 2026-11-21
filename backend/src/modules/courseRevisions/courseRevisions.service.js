@@ -41,9 +41,9 @@ async function ownedCourse({ auth, courseId }, session, writing) {
   return course;
 }
 
-function present(row) {
+export function present(row) {
   return { id: String(row._id), courseId: String(row.courseId), number: row.number, status: row.status,
-    revision: row.revision, baseContentRevision: row.baseContentRevision, metadata: row.metadata };
+    revision: row.revision, baseContentRevision: row.baseContentRevision, metadata: row.metadata, rejectionReason: row.rejectionReason ?? null };
 }
 
 export async function createCandidate(context) {
@@ -83,14 +83,14 @@ export async function createCandidate(context) {
 
 export async function accessCandidate(context, operation, read) {
   return transaction(async session => {
-    await ownedCourse(context, session, !!operation);
+    const course = await ownedCourse(context, session, !!operation);
     const row = await CourseRevision.findOne({ courseId: context.courseId, _id: context.revisionId }).session(session);
     if (!row) throw missing();
     if (!operation) return read ? read(row, session, context) : present(row);
     const editableStatus = operation === reopenCandidate ? 'rejected' : 'draft';
     if (row.status !== editableStatus || !row.active || row.revision !== context.input.expectedRevision
         || row.revision >= Number.MAX_SAFE_INTEGER) throw conflict();
-    const changes = await operation(row, session, context);
+    const changes = await operation(row, session, context, course);
     row.revision += 1;
     await row.save({ session });
     return { ...present(row), ...changes };

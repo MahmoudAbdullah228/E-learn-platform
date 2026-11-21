@@ -1,3 +1,6 @@
+import { z } from 'zod';
+import { financialReasonSchema, financialIdSchema, revisionSchema } from '../finance/finance.schemas.js';
+import { submitCandidate, listPending, reviewDetail, decideRevision } from './revisionReview.service.js';
 import { Router } from 'express';
 
 import { env } from '../../config/env.js';
@@ -35,6 +38,7 @@ export function createCourseRevisionsRouter({ videoProvider, mediaProvider, lear
   mutate('delete', '/media/:assetId', guard, media.remove);
   router.post('/:revisionId/media/:assetId/confirm', validateQuery(empty), validateParams(params), validateBody(guard),
     handleRevision(media.confirm));
+  mutate('post', '/submit', guard, submitCandidate);
   mutate('post', '/reopen', guard, reopenCandidate);
   mutate('post', '/discard', guard, discardCandidate);
   mutate('patch', '', metadata, editMetadata);
@@ -65,6 +69,12 @@ function addReviewReads(router, schema, service) {
 export function createRevisionReviewReadRouter(service, rateLimitStoreFactory) {
   const router = Router();
   router.use(noStore, authenticate, authorize('admin'), revisionLimit(rateLimitStoreFactory, 'course-revision-review'));
+  const id = params.pick({ revisionId: true });
+  const decision = guard.extend({ baseContentRevision: revisionSchema });
+  router.get('/', validateQuery(z.object({ after: financialIdSchema.optional() }).strict()), handleRevision(listPending));
+  router.get('/:revisionId', validateParams(id), validateQuery(empty), handleRevision(reviewDetail));
+  router.post('/:revisionId/approve', validateParams(id), validateQuery(empty), validateBody(decision), handleRevision(decideRevision(true)));
+  router.post('/:revisionId/reject', validateParams(id), validateQuery(empty), validateBody(decision.extend({ reason: financialReasonSchema })), handleRevision(decideRevision(false)));
   addReviewReads(router, params.omit({ courseId: true }), service);
   return router;
 }
