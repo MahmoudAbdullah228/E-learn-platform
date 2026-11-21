@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const schema = new mongoose.Schema({
+  revisionId: { type: mongoose.Schema.Types.ObjectId, ref: 'CourseRevision', immutable: true, default: null },
   ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, immutable: true },
   purpose: { type: String, enum: ['avatar', 'course_cover', 'lesson_attachment'], required: true, immutable: true },
   targetId: { type: mongoose.Schema.Types.ObjectId, required: true, immutable: true },
@@ -19,6 +20,7 @@ const schema = new mongoose.Schema({
   cleanupNotBefore: { type: Date, default: null, select: false },
 }, { timestamps: true });
 
+schema.index({ revisionId: 1, targetId: 1, status: 1 }, { partialFilterExpression: { revisionId: { $type: 'objectId' } } });
 schema.index({ publicId: 1 }, { unique: true });
 schema.index({ providerAssetId: 1 }, {
   unique: true, partialFilterExpression: { providerAssetId: { $type: 'string' } },

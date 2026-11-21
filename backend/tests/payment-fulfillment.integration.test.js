@@ -10,6 +10,7 @@ import { connectDatabase, disconnectDatabase } from '../src/config/db.js';
 import { Category } from '../src/models/Category.js';
 import { Course } from '../src/models/Course.js';
 import { EarningEntry } from '../src/models/EarningEntry.js';
+import { FinancialPolicyVersion } from '../src/models/FinancialPolicyVersion.js';
 import { Enrollment } from '../src/models/Enrollment.js';
 import { Order } from '../src/models/Order.js';
 import { Payment } from '../src/models/Payment.js';
@@ -61,9 +62,12 @@ before(async () => {
   await connectDatabase({ maxRetries: 1 });
   assert.match(mongoose.connection.name, /_test$/);
   await Promise.all(models.map(Model => Model.init()));
+  await FinancialPolicyVersion.init();
   ready = true;
 });
 beforeEach(async () => {
+  assert.ok(ready); assert.match(mongoose.connection.name, /_test$/);
+  await FinancialPolicyVersion.collection.deleteMany({});
   await Promise.all(models.map(Model => Model.deleteMany({})));
   now = Date.now(); sessions.clear(); events.clear(); retrieveHook = undefined;
   retrieveCalls = 0; listCalls = 0;
@@ -74,6 +78,7 @@ afterEach(async () => {
 after(async () => {
   try {
     if (ready && mongoose.connection.readyState === 1) {
+      assert.match(mongoose.connection.name, /_test$/); await FinancialPolicyVersion.collection.deleteMany({});
       await Promise.all(models.map(Model => Model.deleteMany({})));
     }
   } finally { await disconnectDatabase(); }
@@ -83,7 +88,7 @@ function worker() {
   workers.push(value);
   return value;
 }
-async function fixture() {
+async function fixture(options = {}) {
   const student = await User.create({ name: 'Student', email: 'payment-student@example.test',
     passwordHash: 'not-used-for-login', emailVerifiedAt: clock() });
   const instructor = await User.create({ name: 'Instructor', email: 'payment-owner@example.test',
@@ -92,9 +97,10 @@ async function fixture() {
   const course = await Course.create({ instructorId: instructor.id, categoryId: category.id,
     title: 'Payment Test Course', slug: 'payment-test-course', description: 'A detailed payment test course.',
     priceMinor: 12347, status: 'published', publishedAt: clock() });
-  const checkout = createCheckoutService({ provider, clock });
-  const result = await checkout.checkout({ studentId: student.id, courseId: course.id });
-  await checkout.stop();
+  const checkout = createCheckoutService({ provider, clock, ...options });
+  let result;
+  try { result = await checkout.checkout({ studentId: student.id, courseId: course.id }); }
+  finally { await checkout.stop(); }
   const order = await Order.findById(result.data.order.id);
   const raw = sessions.get(`cs_test_${order.id}`);
   return { student, instructor, course, order, raw };
@@ -150,6 +156,32 @@ test('raw signed webhook is durably accepted before worker effects; DTO and payl
   assert.equal(earning.amountMinor, order.instructorAmountMinor);
   assert.equal(earning.status, 'pending'); assert.equal(earning.eligibleAt, null);
   assert.equal((await WebhookEvent.findOne()).status, 'processed');
+});
+
+test('refund-enabled checkout fails closed without an activated policy before any provider session is created', async () => {
+  await assert.rejects(fixture({ requireFinancialPolicy: true }), { code: 'FINANCIAL_POLICY_NOT_CONFIGURED' });
+  assert.equal(await Order.countDocuments(), 0); assert.equal(await Payment.countDocuments(), 0); assert.equal(sessions.size, 0);
+});
+
+test('checkout policy is frozen across later policy versions and delayed duplicate events never move confirmation/deadline', async () => {
+  const first = await FinancialPolicyVersion.create({ version: 'policy-first', effectiveFrom: new Date(now - 86400_000),
+    approvedAt: new Date(now - 2 * 86400_000), refundWindowSeconds: 14 * 86400, refundMode: 'full',
+    lateAdminOverrideAllowed: true, eligibilityRule: 'after_refund_window_without_holds',
+    approvalSource: 'product_delegation', approvalReference: 'test-policy' });
+  const { raw, order } = await fixture({ requireFinancialPolicy: true });
+  now += 5000;
+  await FinancialPolicyVersion.create({ version: 'policy-second', effectiveFrom: clock(), approvedAt: clock(),
+    refundWindowSeconds: 7 * 86400, refundMode: 'full', lateAdminOverrideAllowed: false,
+    eligibilityRule: 'after_refund_window_without_holds', approvalSource: 'product_delegation', approvalReference: 'test-policy' });
+  markPaid(raw); const firstEvent = event(raw); const confirmedAt = firstEvent.created * 1000;
+  await accept(firstEvent); now += 30 * 60_000; await worker().processNext();
+  const paid = await Order.findById(order.id);
+  assert.equal(String(paid.policyVersionId), first.id); assert.equal(paid.refundWindowSeconds, 14 * 86400);
+  assert.equal(paid.paymentConfirmedAt.getTime(), confirmedAt); assert.equal(paid.refundDeadlineAt.getTime(), confirmedAt + 14 * 86400_000);
+  assert.equal((await EarningEntry.findOne()).eligibleAt.getTime(), paid.refundDeadlineAt.getTime());
+  await accept(event(raw, 'evt_later_duplicate')); await worker().processNext();
+  assert.equal((await Order.findById(order.id)).paymentConfirmedAt.getTime(), confirmedAt);
+  assert.equal(await EarningEntry.countDocuments(), 1);
 });
 
 test('invalid signatures, altered raw bytes, live mode, malformed supported evidence and oversized bodies never enter inbox', async () => {
@@ -446,4 +478,16 @@ test('financial and inbox uniqueness/immutability guards reject accidental mutat
   await assert.rejects(EarningEntry.updateOne({ orderId: order.id }, { $set: { amountMinor: 1 } }));
   await assert.rejects(WebhookEvent.updateOne({ eventId: 'evt_success' },
     { $set: { 'payload.amountMinor': 1 } }));
+});
+
+test('trusted payment admitted before archive or block is fulfilled exactly once without bypassing later access policy', async () => {
+  const { order, raw, course } = await fixture();
+  await Course.updateOne({ _id: course.id }, { $set: { status: 'archived', archivedAt: clock(), accessStatus: 'blocked' } });
+  markPaid(raw); await accept(event(raw)); await worker().processNext();
+  await accept(event(raw, 'evt_after_archive_duplicate')); await worker().processNext();
+  assert.equal((await Order.findById(order.id)).status, 'paid');
+  assert.equal(await Enrollment.countDocuments({ sourceOrderId: order.id }), 1);
+  assert.equal(await EarningEntry.countDocuments({ orderId: order.id }), 1);
+  const unchanged = await Course.findById(course.id);
+  assert.equal(unchanged.status, 'archived'); assert.equal(unchanged.accessStatus, 'blocked');
 });

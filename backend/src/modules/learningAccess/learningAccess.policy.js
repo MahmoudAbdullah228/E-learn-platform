@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 
+import { CourseRevision, RevisionLesson } from '../../models/CourseRevision.js';
 import { Course } from '../../models/Course.js';
 import { Enrollment } from '../../models/Enrollment.js';
 import { Lesson } from '../../models/Lesson.js';
@@ -9,11 +10,12 @@ import { Section } from '../../models/Section.js';
 import { User } from '../../models/User.js';
 import { VideoAssetState } from '../../models/VideoAssetState.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { hasCourseAccess, isPublicCourse, isLearningCourse } from '../courses/courseAccess.policy.js';
 
 const notFound = () => new ApiError(404, 'LEARNING_CONTENT_NOT_FOUND', 'Learning content was not found');
 
 // A fresh snapshot is also taken after provider work: old JWT roles/enrollments are not authority.
-export async function resolveLearningAccess({ lessonId, auth, assetId, kind, signal, clock = () => new Date() }) {
+export async function resolveLearningAccess({ lessonId, auth, assetId, revisionId, courseId, kind, signal, clock = () => new Date() }) {
   signal?.throwIfAborted();
   return mongoose.connection.transaction(async session => {
     const read = async query => {
@@ -32,19 +34,36 @@ export async function resolveLearningAccess({ lessonId, auth, assetId, kind, sig
         expiresAt: { $gt: clock() } }));
       if (!liveSession) throw new ApiError(401, 'AUTHENTICATION_REQUIRED', 'Authentication is required');
     }
-    const lesson = await read(Lesson.findById(lessonId).select('+videoAssetId').lean());
-    const section = lesson && await read(Section.findById(lesson.sectionId).lean());
-    const course = section && await read(Course.findById(section.courseId).lean());
+    let lesson, course;
+    if (revisionId) {
+      const candidate = await read(CourseRevision.findOne({ _id: revisionId, active: true,
+        ...(courseId ? { courseId } : {}) }).lean());
+      if (!candidate) throw notFound();
+      course = await read(Course.findById(candidate.courseId).lean());
+      lesson = await read(RevisionLesson.findOne({ revisionId, logicalId: lessonId }).select('+videoAssetId').lean());
+      const allowed = courseId ? user?.roles.includes('instructor') && user.instructorStatus === 'approved'
+        && String(course?.instructorId) === auth.userId : user?.roles.includes('admin');
+      if (!allowed || !lesson || !course) throw notFound();
+    } else {
+      lesson = await read(Lesson.findById(lessonId).select('+videoAssetId').lean());
+      const section = lesson && await read(Section.findById(lesson.sectionId).lean());
+      course = section && await read(Course.findById(section.courseId).lean());
+    }
     if (!course) throw notFound();
     const privileged = user && (user.roles.includes('admin')
       || (String(course.instructorId) === String(auth.userId)
         && user.roles.includes('instructor') && user.instructorStatus === 'approved'));
+    const enrollment = user?.roles.includes('student') && await read(Enrollment.exists({
+      studentId: auth.userId, courseId: course._id, status: 'active',
+    }));
+    // Legal/security policy applies to reviewers too; ownership is no credential bypass.
+    if (!hasCourseAccess(course)) {
+      if (!privileged && !enrollment) throw notFound();
+      throw new ApiError(409, 'COURSE_ACCESS_BLOCKED', 'Course access is currently restricted');
+    }
     if (!privileged) {
-      if (course.status !== 'published') throw notFound();
-      const preview = kind === 'playback' && lesson.isPreview;
-      const enrollment = user?.roles.includes('student') && await read(Enrollment.exists({
-        studentId: auth.userId, courseId: course._id, status: 'active',
-      }));
+      if (!isPublicCourse(course) && !(enrollment && isLearningCourse(course))) throw notFound();
+      const preview = isPublicCourse(course) && kind === 'playback' && lesson.isPreview;
       if (!preview && !enrollment) {
         throw new ApiError(403, 'ENROLLMENT_REQUIRED', 'An active course enrollment is required');
       }
@@ -59,11 +78,15 @@ export async function resolveLearningAccess({ lessonId, auth, assetId, kind, sig
       return { lesson, course };
     }
     if (!lesson.attachments.some(id => String(id) === String(assetId))) throw notFound();
-    const asset = await read(MediaAsset.findOne({ _id: assetId, targetId: lesson._id,
+    const asset = await read(MediaAsset.findOne({ _id: assetId, targetId: lessonId,
       ownerId: course.instructorId, purpose: 'lesson_attachment', provider: 'cloudinary',
       resourceType: 'raw', deliveryType: 'authenticated', status: 'ready', format: 'pdf',
     }).lean());
     if (!asset) throw notFound();
+    if (asset.revisionId && String(asset.revisionId) !== revisionId
+        && !await read(CourseRevision.exists({ _id: asset.revisionId, courseId: course._id, status: 'approved' }))) {
+      throw notFound();
+    }
     return { lesson, course, asset };
   }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
 }

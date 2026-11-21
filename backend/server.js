@@ -4,6 +4,8 @@ import { env } from './src/config/env.js';
 import { assertTransactionSupport } from './src/config/transactions.js';
 import { InstructorApplication } from './src/models/InstructorApplication.js';
 import { Course } from './src/models/Course.js';
+import { RevisionBeforeImage } from './src/models/RevisionBeforeImage.js';
+import { CourseRevision, RevisionLesson, RevisionSection } from './src/models/CourseRevision.js';
 import { CourseReviewEvent } from './src/models/CourseReviewEvent.js';
 import { Section } from './src/models/Section.js';
 import { Lesson } from './src/models/Lesson.js';
@@ -18,6 +20,15 @@ import { Enrollment } from './src/models/Enrollment.js';
 import { LessonProgress } from './src/models/LessonProgress.js';
 import { EarningEntry } from './src/models/EarningEntry.js';
 import { WebhookEvent } from './src/models/WebhookEvent.js';
+import { FinancialPolicyVersion } from './src/models/FinancialPolicyVersion.js';
+import { Refund } from './src/models/Refund.js';
+import { Payout } from './src/models/Payout.js';
+import { PayoutItem } from './src/models/PayoutItem.js';
+import { InstructorFinanceState } from './src/models/InstructorFinanceState.js';
+import { FinancialHold } from './src/models/FinancialHold.js';
+import { AdminAuditEvent } from './src/models/AdminAuditEvent.js';
+import { AdminSecurityState } from './src/models/AdminSecurityState.js';
+import { User } from './src/models/User.js';
 import { logger, serializeError } from './src/config/logger.js';
 import { closeHttpServer } from './src/services/shutdown.service.js';
 import { startHttpServer } from './src/services/startup.service.js';
@@ -33,10 +44,13 @@ async function startServer() {
       await assertTransactionSupport();
       await Promise.all([
         InstructorApplication.init(), Course.init(), CourseReviewEvent.init(),
-        Section.init(), Lesson.init(),
+        Section.init(), Lesson.init(), RevisionBeforeImage.init(), CourseRevision.init(), RevisionSection.init(), RevisionLesson.init(),
         VideoCleanupJob.init(), VideoAssetState.init(), VideoPlaybackLease.init(),
         MediaAsset.init(), MediaCleanupJob.init(),
         Order.init(), Payment.init(), Enrollment.init(), LessonProgress.init(), EarningEntry.init(), WebhookEvent.init(),
+        FinancialPolicyVersion.init(), Refund.init(), Payout.init(), PayoutItem.init(),
+        InstructorFinanceState.init(), FinancialHold.init(), AdminAuditEvent.init(),
+        User.init(), AdminSecurityState.init(),
       ]);
     },
     signal: startupController.signal,
@@ -52,6 +66,8 @@ async function startServer() {
     app.locals.videoCleanupWorker.start();
     app.locals.mediaCleanupWorker.start();
     app.locals.paymentWebhookWorker.start();
+    app.locals.refundRecoveryWorker.start();
+    app.locals.earningsEligibilityWorker.start();
   }
 }
 
@@ -68,7 +84,10 @@ async function shutdown(signal, exitCode = 0) {
   const videoCleanupStopped = app.locals.videoCleanupWorker.stop();
   const mediaCleanupStopped = app.locals.mediaCleanupWorker.stop();
   const checkoutStopped = app.locals.checkoutService.stop();
+  const refundsStopped = app.locals.refundService.stop();
   const paymentWorkerStopped = app.locals.paymentWebhookWorker.stop();
+  const refundRecoveryStopped = app.locals.refundRecoveryWorker.stop();
+  const earningsEligibilityStopped = app.locals.earningsEligibilityWorker.stop();
 
   await closeHttpServer(httpServer, {
     timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
@@ -76,7 +95,7 @@ async function shutdown(signal, exitCode = 0) {
   });
 
   await Promise.all([workerStopped, videoCleanupStopped, mediaCleanupStopped, checkoutStopped,
-    paymentWorkerStopped, learningAccessStopped]);
+    paymentWorkerStopped, refundRecoveryStopped, earningsEligibilityStopped, learningAccessStopped, refundsStopped]);
   await disconnectDatabase();
   process.exitCode = exitCode;
 }

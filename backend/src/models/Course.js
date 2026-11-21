@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 import { normalizeSearchText } from '../utils/searchText.js';
 import { containsUnsafeCharacter } from '../utils/textValidation.js';
+import { safeIntegerField } from './financialFields.js';
 
 const listValidators = [
   {
@@ -66,6 +67,7 @@ const courseSchema = new mongoose.Schema(
     coverAssetId: { type: mongoose.Schema.Types.ObjectId, ref: 'MediaAsset', default: null },
     // Every curriculum mutation writes this document to serialize concurrent transactions.
     curriculumRevision: { type: Number, default: 0, select: false },
+    candidateWriteRevision: { type: Number, default: 0, select: false },
     checkoutRevision: { type: Number, default: 0, select: false },
     learningRevision: { type: Number, default: 0, select: false },
     submittedContentRevision: {
@@ -94,7 +96,7 @@ const courseSchema = new mongoose.Schema(
     currency: { type: String, enum: ['EGP'], default: 'EGP', required: true },
     status: {
       type: String,
-      enum: ['draft', 'pending_review', 'published', 'rejected', 'unavailable'],
+      enum: ['draft', 'pending_review', 'published', 'rejected', 'unavailable', 'archived'],
       default: 'draft',
       required: true,
     },
@@ -102,6 +104,16 @@ const courseSchema = new mongoose.Schema(
     reviewedAt: { type: Date, default: null },
     publishedAt: { type: Date, default: null },
     unavailableAt: { type: Date, default: null },
+    policyRevision: { ...safeIntegerField(), default: 0 },
+    accessStatus: { type: String, enum: ['available', 'blocked'], required: true, default: 'available' },
+    archivedAt: { type: Date, default: null },
+    archivedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, select: false },
+    archiveReason: { type: String, default: null, minlength: 10, maxlength: 500, select: false,
+      validate: value => value == null || !containsUnsafeCharacter(value) },
+    accessChangedAt: { type: Date, default: null, select: false },
+    accessChangedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, select: false },
+    accessReason: { type: String, default: null, minlength: 10, maxlength: 500, select: false,
+      validate: value => value == null || !containsUnsafeCharacter(value) },
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     rejectionReason: {
       type: String, default: null, maxlength: 500,
@@ -121,6 +133,7 @@ courseSchema.index({ categoryId: 1, status: 1 });
 courseSchema.index({ status: 1, titleSearch: 1, _id: 1 });
 courseSchema.index({ status: 1, submittedAt: 1, _id: 1 });
 courseSchema.index({ status: 1, publishedAt: -1, _id: -1 });
+courseSchema.index({ status: 1, accessStatus: 1, publishedAt: -1, _id: -1 });
 
 courseSchema.pre('validate', function setTitleSearch() {
   this.titleSearch = normalizeSearchText(this.title);

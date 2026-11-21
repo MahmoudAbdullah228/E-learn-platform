@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { protectSnapshot } from './protectSnapshot.js';
+import { protectWriteOnce } from './protectFinancialHistory.js';
 
 const reference = ref => ({ type: mongoose.Schema.Types.ObjectId, ref, required: true,
   immutable: true });
@@ -17,11 +18,22 @@ const schema = new mongoose.Schema({
     default: 'pending', required: true },
   expiresAt: { type: Date, required: true, immutable: true },
   paidAt: { type: Date, default: null },
+  replacesOrderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null, select: false },
+  policyVersionId: { type: mongoose.Schema.Types.ObjectId, ref: 'FinancialPolicyVersion', default: null },
+  refundWindowSeconds: { type: Number, default: null, min: 1, max: 365 * 86400,
+    validate: value => value == null || Number.isSafeInteger(value) },
+  paymentConfirmedAt: { type: Date, default: null },
+  refundDeadlineAt: { type: Date, default: null },
   purchaseSlotActive: { type: Boolean, default: true, required: true },
 }, { timestamps: true });
 protectSnapshot(schema, ['studentId', 'courseId', 'instructorId', 'courseTitleSnapshot',
-  'amountMinor', 'currency', 'commissionBps', 'platformAmountMinor', 'instructorAmountMinor', 'expiresAt']);
+  'amountMinor', 'currency', 'commissionBps', 'platformAmountMinor', 'instructorAmountMinor', 'expiresAt',
+  'policyVersionId', 'refundWindowSeconds', 'replacesOrderId']);
+protectWriteOnce(schema, ['paymentConfirmedAt', 'refundDeadlineAt']);
 schema.pre('validate', function validateRevenueSplit() {
+  if (Boolean(this.policyVersionId) !== (this.refundWindowSeconds != null)) {
+    this.invalidate('policyVersionId', 'Policy identity and refund window must be assigned together');
+  }
   if (![this.amountMinor, this.platformAmountMinor, this.instructorAmountMinor, this.commissionBps]
     .every(Number.isSafeInteger)) {
     this.invalidate('amountMinor', 'Amounts and commission must be safe integers');
@@ -36,8 +48,13 @@ schema.pre('validate', function validateRevenueSplit() {
 schema.index({ studentId: 1, courseId: 1 }, { unique: true,
   partialFilterExpression: { purchaseSlotActive: true } });
 schema.index({ studentId: 1, createdAt: -1, _id: -1 });
+schema.index({ createdAt: -1, _id: -1 });
 schema.index({ studentId: 1, status: 1, createdAt: -1, _id: -1 });
 schema.index({ courseId: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, expiresAt: 1 });
+schema.index({ instructorId: 1, currency: 1, paidAt: -1, _id: -1 }, {
+  partialFilterExpression: { status: { $in: ['paid', 'refunded'] } },
+});
+schema.index({ currency: 1, paidAt: 1 }, { partialFilterExpression: { status: { $in: ['paid', 'refunded'] } } });
 export const Order = mongoose.model('Order', schema);

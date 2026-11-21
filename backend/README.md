@@ -1,6 +1,58 @@
 # E-Learning Marketplace API
 
+For frontend integration use the [current API contract](docs/openapi.yaml),
+[frontend handoff](docs/frontend-handoff.md) and [three-role demo](docs/sprint_3_demo.md).
+
 Stories 1.1 through 2.4 provide the production-oriented foundation, authentication, basic profiles, instructor application review, draft courses, ordered curricula, and Mux direct-video uploads. Sprint 2 through S2-11 adds media, categories, review/publication, catalog, Stripe Test checkout/fulfillment, free enrollment, the student library, student/admin order reads, signed Mux playback, private PDF downloads, lesson completion and resume position with dynamic progress. S2-12 real Stripe/Mux/Cloudinary staging acceptance is still required before release.
+
+Sprint 3 S3-02 adds an internal financial foundation: versioned policy models, refund and
+payout records/indexes, audit, exact money helpers, transactional instructor guards and a
+read-only legacy diagnostic. See [S3-02 implementation and verification](docs/sprint_3_financial_foundation.md).
+This Story adds no HTTP endpoints, active policy, eligibility worker or provider calls;
+existing OpenAPI/frontend contracts remain unchanged.
+
+S3-03 adds admin-only `GET /api/v1/admin/users`, `GET /api/v1/admin/users/:userId`
+and `PATCH /api/v1/admin/users/:userId/status`. It includes bounded search/cursors, safe
+DTOs, audited status revisions, transactional session revocation and concurrent admin
+protection. See [S3-03 behavior and verification](docs/sprint_3_admin_users.md).
+The local OpenAPI/frontend handoff now include these operations; Staging acceptance remains pending.
+
+S3-04 adds admin course archive and an independent legal/security access policy. Archived
+courses retain active learner media/progress access while rejecting discovery and new
+enrollment. Explicit access blocks deny new credentials, including reviewer credentials;
+unblock never republishes or repairs unavailable media. See [S3-04 contract and verification](docs/sprint_3_course_access.md).
+Local OpenAPI is 1.2.0; no unarchive or destructive course-delete API is introduced.
+
+S3-05 adds durable admin refund request/read contracts, scoped holds, replay protection and
+a tested bounded Stripe refund adapter. The application keeps new refund
+issuance disabled by default (`REFUND_PROCESSING_ENABLED=false`).
+Legacy financial evidence is never inferred from paidAt. See [S3-05 scope and verification](docs/sprint_3_refund_requests.md).
+S3-06 adds provider-confirmed atomic refund accounting/access, external financial-event
+holds and bounded recovery using the existing inbox. New Checkout freezes a reviewed
+active policy when present; trusted signed success-event time supplies confirmation and
+deadlines. No legacy backfill or policy activation runs automatically. See
+[S3-06 implementation and operations](docs/sprint_3_refund_finalization.md).
+S3-07 adds paid repurchase and explicit now-free reactivation after proven full refund,
+preserving enrollment/progress identity and protecting the new source from old events.
+Owner order reads include a safe latest-refund summary; library reads expose only coarse
+refund/restricted revocation categories. See [S3-07 behavior and verification](docs/sprint_3_repurchase.md).
+S3-08 adds a bounded internal eligibility worker, proof-based dated backfill, persistent
+review holds and a complete signed carry-forward preview. It changes ledger readiness
+only. See [S3-08 rules and verification](docs/sprint_3_earnings_eligibility.md).
+S3-09 adds admin settlement preview, atomic payout draft reservation and payout reads
+in OpenAPI **1.6.0**. See [payout draft operations](docs/sprint_3_payout_drafts.md).
+S3-10 adds payout sealing, confirmation, cancellation and reconciliation in OpenAPI **1.7.0**.
+See [settlement operations](docs/sprint_3_payout_lifecycle.md).
+S3-11 adds private instructor sales, earnings, balances and settlement history in OpenAPI
+**1.8.0**. See [report definitions and frontend usage](docs/sprint_3_instructor_finance.md).
+S3-12 adds the admin dashboard, scoped finance summaries and safe order references in OpenAPI
+**1.9.0**. See [admin finance and refund history](docs/sprint_3_admin_finance.md).
+
+S3-13 adds isolated published-course revision editing and admin text corrections in OpenAPI **1.10.0**.
+See [the frontend handoff](docs/frontend-handoff.md#instructor-revision-editor).
+
+S3-14 adds transactional publication and revision review in OpenAPI **1.11.0**.
+See [the revision review handoff](docs/frontend-handoff.md#published-course-revision-review-openapi-1110).
 
 ## Requirements
 
@@ -316,6 +368,9 @@ See `docs/frontend-handoff.md` for the integration flow and error handling.
 | `STRIPE_CHECKOUT_EXPIRES_SECONDS` | Hosted Checkout expiry, default 1800 seconds |
 | `STRIPE_WEBHOOK_TOLERANCE_SECONDS` | Signature timestamp tolerance, default 300 seconds |
 | `STRIPE_API_TIMEOUT_MS` | Stripe SDK request timeout, default 10000 ms |
+| `REFUND_PROCESSING_ENABLED` | Strict true/false, default false; enables first Test refund issuance only after reviewed policy/acceptance. External financial event processing remains active. |
+| `EARNINGS_ELIGIBILITY_INTERVAL_MS` | Background eligibility interval, default 30000; integer 1000–3600000 ms |
+| `EARNINGS_ELIGIBILITY_BATCH_SIZE` | Maximum entries per background drain, default 25; integer 1–100 |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | Per-IP authentication rate-limit window |
 | `REGISTER_RATE_LIMIT_MAX` | Registration attempts allowed per window and IP |
 | `VERIFY_RATE_LIMIT_MAX` | Verification attempts allowed per window and IP |
@@ -343,12 +398,15 @@ Production requires HTTPS `EMAIL_VERIFICATION_URL` and `PASSWORD_RESET_URL` valu
 | `npm test` | Run serial Node.js and Supertest suites against the test database |
 | `npm run lint` | Run ESLint |
 | `npm run docs:check` | Validate the required OpenAPI structure |
+| `npm run payments:events -- --event-id <id>` | Dry-run; add `--execute` for authenticated event recovery or `--replay --execute` for a reviewed failed inbox job |
+| `npm run refunds:reconcile -- --refund-id <id>` | Dry-run; `--execute` reads one provider outcome into the same inbox, never issues another refund |
+| `npm run earnings:eligibility` | Dry-run; `--execute` evaluates one candidate, optionally `--entry-id <id>`; no transfer or force-eligible option |
 | `npm run staging:status` | Dry-run read-only operational snapshot; `-- --execute` reads aggregate DB counts |
 | `npm run verify` | Run lint, contract validation, and all tests |
 | `npm run providers:proof:live -- --execute` | Run the guarded provider smoke test against dedicated Test/Staging accounts |
 | `npm run migrate:sprint2-content` | Dry-run the idempotent S2-02 legacy-data migration |
 | `npm run migrate:sprint2-content -- --apply` | Apply the reviewed S2-02 legacy-data migration |
-| `npm run seed:admin` | Idempotently create or normalize the first admin |
+| `npm run seed:admin` | Create the first admin or rotate an active admin's credentials; preserve other roles and refuse suspended admins |
 | `npm run seed:categories` | Idempotently create the initial categories |
 
 ## Architecture
@@ -370,3 +428,7 @@ The OpenAPI contract for the implemented stories is in `docs/openapi.yaml`.
 S2-12 handoff preparation: [staging acceptance runbook](docs/staging-acceptance.md) and
 [delivery evidence](docs/staging-evidence.md). Real provider/browser acceptance must be
 executed and recorded separately before closing Sprint 2; automated tests are not that proof.
+
+### Financial operations and restore rehearsal
+
+See the [Sprint 3 operations runbook](docs/sprint_3_financial_operations.md) for financial preflight, additive index rollout, cursor-based sales migration, operational readiness and isolated backup recovery.

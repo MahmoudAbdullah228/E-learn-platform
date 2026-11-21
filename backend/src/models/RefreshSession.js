@@ -15,6 +15,8 @@ const refreshSessionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true },
     revokedAt: { type: Date, default: null },
     learningRevision: { type: Number, default: 0, select: false },
+    adminActionRevision: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isSafeInteger, select: false },
     revokedReason: {
       type: String,
       enum: [
@@ -23,6 +25,7 @@ const refreshSessionSchema = new mongoose.Schema(
         'password_reset',
         'reuse_detected',
         'account_suspended',
+        'account_status_changed',
         'rotation_limit',
       ],
       default: null,

@@ -10,6 +10,8 @@ import { Section } from '../../models/Section.js';
 import { VideoAssetState } from '../../models/VideoAssetState.js';
 import { enqueueVideoCleanup } from '../../services/videoCleanupQueue.service.js';
 import { ApiError } from '../../utils/ApiError.js';
+import { updateCandidateVideos } from '../courseRevisions/revisionVideo.service.js';
+import { appendAuditEvent } from '../audit/audit.service.js';
 
 const attemptIdPattern = /^[a-f\d]{8}-[a-f\d]{4}-[1-5][a-f\d]{3}-[89ab][a-f\d]{3}-[a-f\d]{12}$/i;
 
@@ -264,7 +266,8 @@ export function createVideoService({
             }
           }
         }
-        if (!target) return false;
+        const candidateHandled = await updateCandidateVideos(match, transition.from, fields, session);
+        if (!target) return candidateHandled;
         if (!changesLesson(target, fields)) return true;
         const section = await Section.findById(target.sectionId).select('courseId')
           .session(session).lean();
@@ -272,15 +275,23 @@ export function createVideoService({
           const course = await Course.findById(section.courseId).select('status').session(session);
           if (course) {
             const mustUnpublish = course.status === 'published' && fields.videoStatus === 'failed';
+            const archivedFailure = course.status === 'archived' && fields.videoStatus === 'failed';
             const at = clock();
             await Course.updateOne({ _id: course._id }, {
               $inc: { curriculumRevision: 1 },
               ...(mustUnpublish ? { $set: { status: 'unavailable', unavailableAt: at } } : {}),
+              ...(archivedFailure ? { $set: { unavailableAt: at } } : {}),
             }, { session });
             if (mustUnpublish) {
               await CourseReviewEvent.create([{ courseId: course._id, actorId: null,
                 action: 'unpublished', fromStatus: 'published', toStatus: 'unavailable',
                 reason: 'Provider video asset is unavailable', occurredAt: at }], { session });
+            }
+            if (archivedFailure) {
+              await appendAuditEvent({ session, occurredAt: at, input: {
+                actorType: 'system', action: 'course.media_unavailable', targetType: 'course',
+                targetId: course.id, fromStatus: 'archived', toStatus: 'archived',
+              } });
             }
           }
         }

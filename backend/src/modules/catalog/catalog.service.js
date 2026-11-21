@@ -9,6 +9,8 @@ import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { normalizeSearchText } from '../../utils/searchText.js';
 import { summarizeCurriculum } from './curriculumSummary.js';
+import { publicCourseFilter } from '../courses/courseAccess.policy.js';
+import { courseCoverUrl } from '../media/courseCoverUrl.js';
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -61,19 +63,14 @@ async function relatedData(courses, mediaProvider, { instructorDetails = false, 
     .select('_id publicId format targetId ownerId').session(session ?? null).lean();
   const byId = items => new Map(items.map(item => [item._id.toString(), item]));
   const coversById = byId(covers);
-  const coverUrl = course => {
-    const asset = coversById.get(course.coverAssetId?.toString());
-    if (!asset || asset.targetId.toString() !== course._id.toString()
-        || asset.ownerId.toString() !== course.instructorId.toString()) return null;
-    return mediaProvider.publicImageUrl({ publicId: asset.publicId, format: asset.format });
-  };
+  const coverUrl = course => courseCoverUrl(course, coversById.get(course.coverAssetId?.toString()), mediaProvider);
   return { categories: byId(categories), instructors: byId(instructors), coverUrl };
 }
 
 export function createCatalogService({ mediaProvider }) {
   return Object.freeze({
     async list({ q, categoryId, pricing, page, limit }) {
-      const filter = { status: 'published' };
+      const filter = publicCourseFilter();
       if (categoryId) filter.categoryId = categoryId;
       if (pricing === 'free') filter.priceMinor = 0;
       if (pricing === 'paid') filter.priceMinor = { $gt: 0 };
@@ -94,7 +91,7 @@ export function createCatalogService({ mediaProvider }) {
 
     async getBySlug(slug) {
       return mongoose.connection.transaction(async session => {
-        const course = await Course.findOne({ slug, status: 'published' }).session(session).lean();
+        const course = await Course.findOne(publicCourseFilter({ slug })).session(session).lean();
         if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
         const related = await relatedData([course], mediaProvider,
           { instructorDetails: true, session });

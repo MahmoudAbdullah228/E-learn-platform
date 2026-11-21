@@ -3,22 +3,13 @@ import pino from 'pino';
 import { env } from './env.js';
 
 export function serializeRequest(request) {
-  const requestUrl = typeof request.url === 'string' ? request.url : '';
-  const queryStart = requestUrl.indexOf('?');
-  const path = queryStart === -1 ? requestUrl : requestUrl.slice(0, queryStart);
-
-  return {
-    id: request.id,
-    method: request.method,
-    path,
-    remoteAddress: request.remoteAddress,
-    remotePort: request.remotePort,
-  };
+  return { id: request.id, method: request.method };
 }
 
 export function serializeError(error) {
   const errorType =
-    typeof error?.name === 'string' && error.name.length <= 64 ? error.name : 'UnknownError';
+    typeof error?.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+      ? error.name : 'UnknownError';
   const fields = { errorType };
 
   if (

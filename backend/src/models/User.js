@@ -61,6 +61,13 @@ const userSchema = new mongoose.Schema(
     instructorReviewRevision: { type: Number, default: 0, select: false },
     checkoutRevision: { type: Number, default: 0, select: false },
     learningRevision: { type: Number, default: 0, select: false },
+    payoutAdmissionRevision: { type: Number, default: 0, select: false },
+    adminActionRevision: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isSafeInteger, select: false },
+    statusRevision: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isSafeInteger, select: false },
+    statusChangedAt: { type: Date, default: null, select: false },
+    statusChangedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, select: false },
     emailVerifiedAt: {
       type: Date,
       default: null,
@@ -94,6 +101,9 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ createdAt: -1, _id: -1 });
+userSchema.index({ status: 1, createdAt: -1, _id: -1 });
+userSchema.index({ roles: 1, status: 1, createdAt: -1, _id: -1 });
 userSchema.index({ 'passwordReset.tokenHash': 1 }, {
   unique: true,
   partialFilterExpression: { 'passwordReset.tokenHash': { $type: 'string' } },

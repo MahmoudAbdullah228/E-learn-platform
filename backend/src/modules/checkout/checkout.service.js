@@ -10,6 +10,10 @@ import { User } from '../../models/User.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { splitCourseRevenue } from '../../utils/money.js';
 import { toCheckoutOrder } from './checkout.presenter.js';
+import { publicCourseFilter } from '../courses/courseAccess.policy.js';
+import { FinancialPolicyVersion } from '../../models/FinancialPolicyVersion.js';
+import { env } from '../../config/env.js';
+import { refundReentrySource } from '../enrollments/enrollmentReentry.service.js';
 
 const transactionOptions = { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } };
 const leaseMs = 120_000;
@@ -37,7 +41,7 @@ function assertSessionMatches(session, order, payment) {
 }
 
 export function createCheckoutService({ provider, clock = () => new Date(),
-  shutdownTimeoutMs = 10_000 }) {
+  shutdownTimeoutMs = 10_000, requireFinancialPolicy = env.REFUND_PROCESSING_ENABLED }) {
   const transaction = work => mongoose.connection.transaction(work, transactionOptions);
   const controller = new AbortController();
   const { signal } = controller;
@@ -62,19 +66,18 @@ export function createCheckoutService({ provider, clock = () => new Date(),
       signal.throwIfAborted();
       if (!student) throw new ApiError(403, 'CHECKOUT_NOT_ALLOWED',
         'A verified active student account is required');
-      const course = await Course.findOneAndUpdate({ _id: courseId, status: 'published' },
+      const course = await Course.findOneAndUpdate(publicCourseFilter({ _id: courseId }),
         { $inc: { checkoutRevision: 1 } }, { session, timestamps: false });
       signal.throwIfAborted();
       if (!course) throw new ApiError(404, 'COURSE_NOT_FOUND', 'Course was not found');
       if (course.instructorId.toString() === studentId.toString()) {
         throw new ApiError(403, 'OWN_COURSE_PURCHASE_NOT_ALLOWED', 'You cannot buy your own course');
       }
-      const enrolled = await Enrollment.findOne({ studentId, courseId }).select('status').session(session);
+      const enrolled = await Enrollment.findOne({ studentId, courseId }).session(session);
       signal.throwIfAborted();
-      if (enrolled?.status === 'revoked') throw new ApiError(409, 'ENROLLMENT_REVOKED',
-        'A revoked enrollment requires review before another purchase');
-      if (enrolled) throw new ApiError(409, 'COURSE_ALREADY_ENROLLED',
+      if (enrolled?.status === 'active') throw new ApiError(409, 'COURSE_ALREADY_ENROLLED',
         'You are already enrolled in this course');
+      const replacesOrderId = enrolled ? await refundReentrySource({ enrollment: enrolled, session }) : null;
       const existing = await Order.findOne({ studentId, courseId, purchaseSlotActive: true })
         .session(session);
       signal.throwIfAborted();
@@ -98,10 +101,17 @@ export function createCheckoutService({ provider, clock = () => new Date(),
         + Math.min(settings.checkoutExpiresSeconds + 120, 86_400);
       const orderId = new mongoose.Types.ObjectId();
       const idempotencyKey = `checkout:${orderId}`;
+      const createdAt = clock();
+      const policy = await FinancialPolicyVersion.findOne({ effectiveFrom: { $lte: createdAt } })
+        .sort({ effectiveFrom: -1 }).session(session);
+      if (policy) await policy.validate();
+      if (requireFinancialPolicy && !policy) throw new ApiError(503, 'FINANCIAL_POLICY_NOT_CONFIGURED',
+        'A reviewed financial policy must be activated before checkout');
       const [order] = await Order.create([{ _id: orderId, studentId, courseId,
         instructorId: course.instructorId, courseTitleSnapshot: course.title,
         amountMinor: course.priceMinor, currency: course.currency,
         ...splitCourseRevenue(course.priceMinor), expiresAt: new Date(expiresAtSeconds * 1000),
+        createdAt, replacesOrderId, policyVersionId: policy?._id ?? null, refundWindowSeconds: policy?.refundWindowSeconds ?? null,
       }], { session });
       signal.throwIfAborted();
       const [payment] = await Payment.create([{ orderId, amountMinor: order.amountMinor,

@@ -9,7 +9,7 @@ const uniqueTextListSchema = z.array(listItemSchema).max(30).refine(
   { message: 'List items must be unique' },
 );
 
-const courseFields = {
+export const courseFields = {
   title: textSchema({ field: 'Title', minimum: 3, maximum: 160 }),
   categoryId: objectIdSchema,
   description: textSchema({
@@ -47,7 +47,7 @@ export const courseIdParamsSchema = z.object({
 }).strict();
 
 export const listCoursesQuerySchema = z.object({
-  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable']).default('draft'),
+  status: z.enum(['draft', 'pending_review', 'published', 'rejected', 'unavailable', 'archived']).default('draft'),
   page: z.string().regex(/^[1-9]\d*$/).default('1').transform(Number)
     .pipe(z.number().int().min(1).max(1_000_000)),
   limit: z.string().regex(/^[1-9]\d*$/).default('20').transform(Number)

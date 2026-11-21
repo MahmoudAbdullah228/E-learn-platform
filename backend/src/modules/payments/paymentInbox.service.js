@@ -1,10 +1,14 @@
+import { createHash } from 'node:crypto';
 import { WebhookEvent } from '../../models/WebhookEvent.js';
 import { ApiError } from '../../utils/ApiError.js';
 import { parsePaymentEvent } from './payment.schemas.js';
+import { createRefundInboxService } from '../refunds/refundInbox.service.js';
 
 export function createPaymentInboxService({ provider, clock = () => new Date() }) {
+  const financialInbox = createRefundInboxService({ clock });
   async function persist(input) {
     const { eventId, eventType, ignored, payload } = parsePaymentEvent(input);
+    if (payload.kind) return financialInbox.persist({ eventId, eventType, payload });
     const now = clock();
     try {
       await WebhookEvent.create([{ eventId, eventType, payload,
@@ -28,6 +32,13 @@ export function createPaymentInboxService({ provider, clock = () => new Date() }
       const event = await provider.retrieveEvent(eventId);
       if (event?.id !== eventId) throw new ApiError(409, 'PAYMENT_EVENT_CONFLICT',
         'Payment event conflicts with the requested record');
+      const parsed = parsePaymentEvent(event);
+      if (parsed.payload.kind && await WebhookEvent.exists({ provider: 'stripe', eventId, status: 'ignored' })) {
+        // Older deployments ignored these types. Keep that immutable receipt and
+        // append authenticated recovery evidence to the same inbox instead.
+        const recoveredId = `evt_recovered_${createHash('sha256').update(eventId).digest('hex')}`;
+        await financialInbox.persist({ ...parsed, eventId: recoveredId, origin: 'reconciliation' }); return;
+      }
       await persist(event);
     },
     async replay(eventId) {

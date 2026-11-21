@@ -10,6 +10,7 @@ import { enrollBodySchema, libraryQuerySchema } from '../src/modules/enrollments
 import { toOrder, toPayment } from '../src/modules/orders/order.presenter.js';
 import { adminOrderQuerySchema, orderQuerySchema } from '../src/modules/orders/order.schemas.js';
 import { toPagination } from '../src/utils/pagination.js';
+import { grantPaidEnrollment, reactivateFreeEnrollment, refundReentrySource } from '../src/modules/enrollments/enrollmentReentry.service.js';
 
 test('enrollment/order query schemas are bounded and reject mass assignment and duplicate inputs', () => {
   assert.deepEqual(libraryQuerySchema.parse({}), { page: 1, limit: 20, status: 'active' });
@@ -58,4 +59,26 @@ test('enrollment/order schemas retain uniqueness and targeted paginated-read ind
   assert.ok(Order.schema.indexes().some(([keys]) => keys.studentId === 1 && keys.status === 1 && keys.createdAt === -1));
   assert.ok(Order.schema.indexes().some(([keys]) => keys.courseId === 1 && keys.createdAt === -1));
   assert.equal([...enrollmentIndexes, ...Order.schema.indexes()].some(([, options]) => options.expireAfterSeconds != null), false);
+});
+
+test('enrollment grants and refund-reentry proof cannot run without an active caller transaction', async () => {
+  for (const operation of [grantPaidEnrollment, reactivateFreeEnrollment, refundReentrySource]) {
+    await assert.rejects(operation({}), { name: 'TypeError', message: 'Enrollment grants require an active transaction' });
+  }
+});
+
+test('refund-facing DTOs disclose only the coarse owner reason and allowlisted refund summary', () => {
+  const id = new mongoose.Types.ObjectId(); const date = new Date();
+  for (const reason of ['admin', 'legal', 'security', null]) {
+    const enrollment = toEnrollment({ _id: id, courseId: id, status: 'revoked', revocationReason: reason });
+    assert.equal(enrollment.revocationReason, 'restricted');
+  }
+  assert.equal(toEnrollment({ _id: id, courseId: id, status: 'revoked', revocationReason: 'refund' }).revocationReason, 'refund');
+  const order = { _id: id, courseId: id, courseTitleSnapshot: 'Course', amountMinor: 100, currency: 'EGP', status: 'refunded',
+    expiresAt: date, createdAt: date, replacesOrderId: id };
+  const dto = toOrder(order, { latestRefund: { _id: id, kind: 'full', status: 'succeeded', amountMinor: 100, currency: 'EGP',
+    createdAt: date, completedAt: date, providerRefundId: 'private', reason: 'private', initiatedBy: id, paymentIntentId: 'private' } });
+  assert.equal(dto.replacesOrderId, undefined);
+  assert.deepEqual(Object.keys(dto.latestRefund).sort(), ['amountMinor', 'completedAt', 'createdAt', 'currency', 'id', 'kind', 'status']);
+  assert.equal(toOrder(order).latestRefund, null);
 });

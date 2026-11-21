@@ -104,6 +104,9 @@ const environmentSchema = z
       .default(1800),
     STRIPE_WEBHOOK_TOLERANCE_SECONDS: z.coerce.number().int().min(60).max(600).default(300),
     STRIPE_API_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(10_000),
+    REFUND_PROCESSING_ENABLED: z.enum(['true', 'false']).default('false').transform(value => value === 'true'),
+    EARNINGS_ELIGIBILITY_INTERVAL_MS: z.coerce.number().int().min(1000).max(3_600_000).default(30_000),
+    EARNINGS_ELIGIBILITY_BATCH_SIZE: z.coerce.number().int().min(1).max(100).default(25),
     REGISTER_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
     VERIFY_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
     RESEND_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(5),
@@ -244,6 +247,10 @@ const environmentSchema = z
       values.STRIPE_CHECKOUT_SUCCESS_URL,
       values.STRIPE_CHECKOUT_CANCEL_URL,
     ];
+    if (values.REFUND_PROCESSING_ENABLED && !stripeConfiguration.every(Boolean)) {
+      context.addIssue({ code: 'custom', path: ['REFUND_PROCESSING_ENABLED'],
+        message: 'Refund processing requires complete Stripe Test Mode configuration' });
+    }
     if (stripeConfiguration.some(Boolean) && !stripeConfiguration.every(Boolean)) {
       context.addIssue({
         code: 'custom',

@@ -6,7 +6,7 @@ import pinoHttp from 'pino-http';
 
 import { corsOptions } from './config/cors.js';
 import { env } from './config/env.js';
-import { logger, serializeRequest } from './config/logger.js';
+import { logger, serializeError, serializeRequest } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
@@ -61,6 +61,8 @@ import { stripePaymentProvider } from './services/stripePayment.service.js';
 import { createPaymentInboxService } from './modules/payments/paymentInbox.service.js';
 import { createPaymentWebhookRouter } from './modules/payments/payment.routes.js';
 import { createPaymentWebhookWorker } from './services/paymentWebhookWorker.service.js';
+import { createRefundRecoveryWorker } from './services/refundRecoveryWorker.service.js';
+import { createEarningsEligibilityWorker } from './services/earningsEligibilityWorker.service.js';
 import { authenticate } from './middlewares/authenticate.js';
 import { noStore } from './middlewares/noStore.js';
 import { createAuthenticatedRateLimiter } from './middlewares/rateLimiter.js';
@@ -72,6 +74,19 @@ import { createLearningAccessService } from './modules/learningAccess/learningAc
 import { createLearningAccessRouter } from './modules/learningAccess/learningAccess.routes.js';
 import { createProgressService } from './modules/progress/progress.service.js';
 import { createProgressRouter } from './modules/progress/progress.routes.js';
+import { createAdminUsersRouter } from './modules/adminUsers/adminUsers.routes.js';
+import { createAdminUsersService } from './modules/adminUsers/adminUsers.service.js';
+import { createCourseRevisionsRouter, createRevisionReviewReadRouter } from './modules/courseRevisions/courseRevisions.routes.js';
+import { createCourseAdministrationRouter } from './modules/courseAdministration/courseAdministration.routes.js';
+import { createCourseAdministrationService } from './modules/courseAdministration/courseAdministration.service.js';
+import { createRefundService } from './modules/refunds/refund.service.js';
+import { createRefundRouters } from './modules/refunds/refund.routes.js';
+import { createPayoutRouter } from './modules/payouts/payout.routes.js';
+import { createInstructorFinanceRouter } from './modules/instructorFinance/instructorFinance.routes.js';
+import { createInstructorFinanceService } from './modules/instructorFinance/instructorFinance.service.js';
+import { createAdminFinanceRouter } from './modules/adminFinance/adminFinance.routes.js';
+import { createAdminFinanceService } from './modules/adminFinance/adminFinance.service.js';
+import { createPayoutService } from './modules/payouts/payout.service.js';
 
 export function createApp({
   emailSender,
@@ -102,6 +117,9 @@ export function createApp({
   const catalogService = createCatalogService({ mediaProvider });
   const enrollmentService = createEnrollmentService({ mediaProvider });
   const orderService = createOrderService();
+  const refundService = createRefundService({ provider: paymentProvider, shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.refundService = refundService;
+  const refundRouters = createRefundRouters({ service: refundService, rateLimitStoreFactory });
   const courseReviewService = createCourseReviewService();
   const checkoutService = createCheckoutService({ provider: paymentProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
@@ -109,6 +127,9 @@ export function createApp({
   const paymentInbox = createPaymentInboxService({ provider: paymentProvider });
   application.locals.paymentWebhookWorker = createPaymentWebhookWorker({ provider: paymentProvider,
     shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.refundRecoveryWorker = createRefundRecoveryWorker({ provider: paymentProvider,
+    shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS });
+  application.locals.earningsEligibilityWorker = createEarningsEligibilityWorker();
   const deliveryHandlers = Object.freeze({
     email_verification: authService.deliverVerificationRequest,
     password_reset: passwordResetService.deliverResetRequest,
@@ -132,12 +153,19 @@ export function createApp({
   application.disable('x-powered-by');
   application.set('trust proxy', env.TRUST_PROXY_HOPS);
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders',
-    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons'], noStore);
+    '/api/v1/courses/:courseId/enroll', '/api/v1/lessons', '/api/v1/admin/users',
+    '/api/v1/admin/courses', '/api/v1/admin/refunds', '/api/v1/admin/payouts',
+    '/api/v1/admin/instructors/:instructorId/settlement-preview', '/api/v1/instructor/finance',
+    '/api/v1/instructor/sales', '/api/v1/instructor/earnings', '/api/v1/instructor/payouts',
+    '/api/v1/admin/dashboard', '/api/v1/admin/finance'], noStore);
   application.use(
     pinoHttp({
       logger,
+      wrapSerializers: false,
       serializers: {
         req: serializeRequest,
+        res: response => ({ statusCode: response.statusCode }),
+        err: serializeError,
       },
     }),
   );
@@ -155,6 +183,8 @@ export function createApp({
   application.use(express.json({ limit: '1mb' }));
 
   application.use('/api/v1/health', healthRouter);
+  application.use('/api/v1/admin/users', createAdminUsersRouter({ service: createAdminUsersService(),
+    rateLimitStoreFactory }));
   application.use('/api/v1', docsRouter);
   application.use(
     '/api/v1/auth',
@@ -165,6 +195,7 @@ export function createApp({
       rateLimitStoreFactory,
     }),
   );
+  application.use('/api/v1/admin/orders', refundRouters.requests);
   application.use('/api/v1/users/me/courses', createProgressRouter({ service: createProgressService(),
     rateLimitStoreFactory }));
   application.use(['/api/v1/users/me/courses', '/api/v1/users/me/orders', '/api/v1/admin/orders'],
@@ -174,6 +205,7 @@ export function createApp({
   application.use('/api/v1/users/me/courses', createLibraryRouter({ enrollmentService }));
   application.use('/api/v1/users/me/orders', createStudentOrdersRouter({ orderService }));
   application.use('/api/v1/admin/orders', createAdminOrdersRouter({ orderService }));
+  application.use('/api/v1/admin/refunds', refundRouters.reads);
   application.use('/api/v1/users', createUsersRouter({ usersService }));
   application.use('/api/v1/lessons', createLearningAccessRouter({ service: learningAccessService,
     rateLimitStoreFactory }));
@@ -201,9 +233,14 @@ export function createApp({
     instructorsService,
     rateLimitStoreFactory,
   }));
+  application.use('/api/v1/admin/course-revisions', createRevisionReviewReadRouter(learningAccessService, rateLimitStoreFactory));
+  application.use('/api/v1/instructor/courses/:courseId/revisions', createCourseRevisionsRouter({ videoProvider, mediaProvider, learningAccessService, rateLimitStoreFactory }));
   application.use('/api/v1/instructor/courses', createCoursesRouter({ coursesService }));
   application.use('/api/v1/instructor/courses', createInstructorCourseReviewRouter({
     reviewService: courseReviewService, rateLimitStoreFactory,
+  }));
+  application.use('/api/v1/admin/courses', createCourseAdministrationRouter({
+    service: createCourseAdministrationService(), rateLimitStoreFactory,
   }));
   application.use('/api/v1/admin/courses', createAdminCourseReviewRouter({
     reviewService: courseReviewService, rateLimitStoreFactory,
@@ -213,6 +250,10 @@ export function createApp({
   }));
   application.use('/api/v1/instructor', createInstructorVideoRouter({ videoService }));
 
+  application.use('/api/v1/admin', createPayoutRouter({ service: createPayoutService(), rateLimitStoreFactory }));
+  application.use('/api/v1/instructor', createInstructorFinanceRouter({ service: createInstructorFinanceService(),
+    rateLimitStoreFactory }));
+  application.use('/api/v1/admin', createAdminFinanceRouter({ service: createAdminFinanceService(), rateLimitStoreFactory }));
   application.use(notFoundHandler);
   application.use(errorHandler);
 

@@ -117,6 +117,15 @@ test('catalog supports Arabic and English prefix search, category, and pricing f
   const archivedCategory = await request(app)
     .get(`/api/v1/courses?categoryId=${archived.id}`).expect(200);
   assert.deepEqual(archivedCategory.body.data.courses.map(course => course.id), [arabic.id]);
+  const filters = { q: 'تعلم', categoryId: archived.id, pricing: 'paid', limit: 1 };
+  const combined = await request(app).get('/api/v1/courses').query(filters).expect(200);
+  assert.deepEqual(combined.body.data.courses.map(course => course.id), [arabic.id]);
+  const emptyPage = await request(app).get('/api/v1/courses').query({ ...filters, page: 2 }).expect(200);
+  assert.deepEqual(emptyPage.body.data.courses, []);
+  assert.equal(emptyPage.body.data.pagination.total, 1);
+  const noMatch = await request(app).get('/api/v1/courses').query({ ...filters, pricing: 'free' }).expect(200);
+  assert.deepEqual(noMatch.body.data.courses, []);
+  assert.equal(noMatch.body.data.pagination.total, 0);
 });
 
 test('published details expose curriculum and approved profile without private media data', async () => {
@@ -178,6 +187,19 @@ test('catalog hides an unapproved profile and a mismatched cover association', a
   assert.equal(result.body.data.course.instructor.name, 'Public Instructor');
   assert.equal(result.body.data.course.instructor.bio, null);
   assert.deepEqual(result.body.data.course.instructor.links, []);
+});
+
+test('catalog keeps courses visible when a legacy cover has incomplete ownership metadata', async () => {
+  const { arabic } = await fixture();
+  const cover = await MediaAsset.findOne({ targetId: arabic._id });
+  for (const field of ['ownerId', 'targetId']) {
+    await MediaAsset.collection.updateOne({ _id: cover._id }, { $unset: { [field]: '' } });
+    const listing = await request(app).get('/api/v1/courses').expect(200);
+    assert.equal(listing.body.data.courses.find(course => course.id === arabic.id).coverUrl, null);
+    const detail = await request(app).get('/api/v1/courses/' + encodeURIComponent(arabic.slug)).expect(200);
+    assert.equal(detail.body.data.course.coverUrl, null);
+    await MediaAsset.collection.updateOne({ _id: cover._id }, { $set: { [field]: cover[field] } });
+  }
 });
 
 test('catalog hides nonpublished slugs and rejects unsafe query shapes', async () => {

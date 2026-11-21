@@ -10,13 +10,13 @@ function cleanupResource(lesson) {
   return null;
 }
 
-export async function enqueueVideoCleanup(lessons, session) {
+export async function enqueueVideoCleanup(lessons, session, availableAt) {
   const jobs = lessons.map(cleanupResource).filter(Boolean);
   if (!jobs.length) return;
   await VideoCleanupJob.bulkWrite(jobs.map(job => ({
     updateOne: {
       filter: job,
-      update: { $setOnInsert: job },
+      update: { $setOnInsert: job, ...(availableAt ? { $max: { availableAt } } : {}) },
       upsert: true,
     },
   })), { session, ordered: false });
