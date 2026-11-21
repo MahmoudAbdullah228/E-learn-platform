@@ -18,6 +18,7 @@
     "migrate:sales": "node --env-file-if-exists=.env scripts/finance-operations.js migrate",
     "restore:check": "node --env-file-if-exists=.env scripts/finance-operations.js restore-check",
     "restore:drill": "node scripts/restore-drill.js",
+    "staging:smoke": "node scripts/staging-smoke.js",
     "staging:status": "node --env-file-if-exists=.env scripts/staging-status.js",
     "payments:events": "node --env-file-if-exists=.env scripts/payment-events.js",
     "refunds:reconcile": "node --env-file-if-exists=.env scripts/refund-reconcile.js",

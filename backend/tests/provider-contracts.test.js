@@ -74,6 +74,9 @@ test('Cloudinary signs server-owned image and authenticated PDF upload parameter
     'https://res.cloudinary.com/example-cloud/image/upload/users/owner/avatar-asset.png');
   assert.equal(provider.publicImageUrl({ publicId: 'users/owner/avatar-asset', format: 'pdf' }),
     null);
+  for (const publicId of [null, '../legacy/avatar', 'a'.repeat(256)]) {
+    assert.equal(provider.publicImageUrl({ publicId, format: 'png' }), null);
+  }
   assert.throws(
     () => provider.createSignedUpload({ publicId: '../foreign/asset', purpose: 'avatar' }),
     /server-generated Cloudinary public ID/,

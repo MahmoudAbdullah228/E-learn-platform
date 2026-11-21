@@ -12,6 +12,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { toPagination } from '../../utils/pagination.js';
 import { toEnrollment, toLibraryCourse } from './enrollment.presenter.js';
 import { readProgressSummaries } from '../progress/progress.read.service.js';
+import { courseCoverUrl } from '../media/courseCoverUrl.js';
 import { publicCourseFilter, isLearningCourse, courseAvailabilityCode } from '../courses/courseAccess.policy.js';
 import { reactivateFreeEnrollment } from './enrollmentReentry.service.js';
 
@@ -82,10 +83,7 @@ export function createEnrollmentService({ mediaProvider, clock = () => new Date(
         return { courses: enrollments.map(enrollment => {
           const course = courseMap.get(enrollment.courseId.toString());
           const cover = coverMap.get(course?.coverAssetId?.toString());
-          const validCover = cover && cover.targetId.toString() === course._id.toString()
-            && cover.ownerId.toString() === course.instructorId.toString();
-          const coverUrl = validCover
-            ? mediaProvider.publicImageUrl({ publicId: cover.publicId, format: cover.format }) : null;
+          const coverUrl = courseCoverUrl(course, cover, mediaProvider);
           const lastLesson = lastLessonMap.get(enrollment.lastLessonId?.toString());
           const lastSection = lastLesson && lastSectionMap.get(lastLesson.sectionId.toString());
           const lastLessonId = lastSection?.courseId.toString() === enrollment.courseId.toString()

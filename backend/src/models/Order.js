@@ -48,6 +48,7 @@ schema.pre('validate', function validateRevenueSplit() {
 schema.index({ studentId: 1, courseId: 1 }, { unique: true,
   partialFilterExpression: { purchaseSlotActive: true } });
 schema.index({ studentId: 1, createdAt: -1, _id: -1 });
+schema.index({ createdAt: -1, _id: -1 });
 schema.index({ studentId: 1, status: 1, createdAt: -1, _id: -1 });
 schema.index({ courseId: 1, createdAt: -1, _id: -1 });
 schema.index({ status: 1, createdAt: -1, _id: -1 });

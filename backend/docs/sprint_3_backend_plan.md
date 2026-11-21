@@ -412,12 +412,17 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 
 ### S3-16 — Staging failure matrix والتكامل الحقيقي (6–10 ساعات)
 
+الحالة: التجربة المحلية موثّقة في [سجل S3-16](sprint_3_staging_matrix.md). اعتماد Staging معلّق لحين النشر.
+
+
 - Models/routes: لا feature جديدة لمجرد الاختبار؛ تجهيز بيانات منفصلة وثلاثة أدوار دون patch يدوي لحالات readiness/paid.
 - أدوات اختبارات وfixtures/runbooks وفق الموافقات؛ provider Test Mode ووسائط حقيقية وواجهة الفريق وingress الحقيقي.
 - قبول: إغلاق A01–A19 والحالات B01–B21 أدناه بدليل sanitized، الأخطاء المهمة لها fixes/regression ثم إعادة الاختبار؛ NOT RUN ليست PASS.
 - تحقق: refunds الفعلية وduplicate events وconcurrent settlement، media expiry، mobile/network، logs/alerts/restore/rollback. التحويل اليدوي محاكاة لا أموال حقيقية.
 
 ### S3-17 — Documentation وFrontend handoff وFinal demo (4–6 ساعات)
+
+حزمة التسليم المحلية وسيناريو العرض متاحان في [دليل الديمو](sprint_3_demo.md). تسجيل العرض واعتماد كل دور على النسخة المنشورة ما زالا مفتوحين.
 
 - Models: لا جديد. Zod/routes/controllers: contract coverage مقارنة بالموجود؛ Swagger labels وREADME وأمثلة DTO/error/state وتجربة permissions.
 - وثائق policy/runbooks وsecrets placeholders وdecision log؛ demo end-to-end للأدوار الثلاثة وحالات failure/refund/archive/revision/payout.
@@ -443,6 +448,8 @@ Enrollment unique للطالب والكورس يبقى. fulfillment الجديد
 - أي defect يمنع رحلة أساسية أو يعرض المال/البيانات لا يُؤجل كتحسين. لا تضمن هذه المراجعة انعدام كل العيوب؛ توثق الباقي وتمنع القبول عند أثر غير مقبول.
 
 ### S3-20 — Final product acceptance وإغلاق الـMVP (2–4 ساعات BE1 للتنسيق)
+
+حالة التسليم الحالية موثقة في [سجل قبول المنتج](sprint_3_product_acceptance.md)، ويشمل AC01–AC14 وأصحاب الأدلة المطلوبة على Staging.
 
 - Models/Zod/controllers/routes: لا feature جديدة لهذه Story؛ مقارنة العقد والكود الفعلي بمصفوفات §17 وإغلاق كل required row. أي feature ناقصة تعود لStory تنفيذ داخل Sprint 3 قبل القبول، لا تُخفى في checklist.
 - Owner قبول المنتج: ممثل المنتج؛ BE1 للدليل التقني، FE1/FE2/FE3 وUX1 لواجهات وتجارب الأدوار. ساعات FE/UX والمراجعة التجارية تُقدَّر منفصلة، ولا تدخل تلقائيًا في ساعات BE1 أعلاه.

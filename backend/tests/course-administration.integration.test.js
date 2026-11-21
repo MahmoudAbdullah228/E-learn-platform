@@ -652,9 +652,17 @@ test('replacing a completed lesson retains its history and computes completion a
     { expectedRevision: 6, title: 'Replacement lesson' }).expect(201)).body.data.logicalId;
   const attempt = randomUUID();
   await RevisionLesson.updateOne({ revisionId: f.row.id, logicalId: added },
-    { videoAssetId: 'replacement-ready', videoStatus: 'ready', videoUploadAttemptId: attempt });
+    { videoAssetId: 'replacement-ready', videoStatus: 'ready', durationSeconds: 87, videoUploadAttemptId: attempt });
   await f.call('post', f.editor + '/submit', { expectedRevision: 7 }).expect(200);
+  const detailPath = '/api/v1/courses/' + f.course.slug;
+  const previous = (await read(detailPath).expect(200)).body.data.course;
+  assert.equal(previous.sections[0].lessons[0].id, f.lesson.id);
+  assert.equal(previous.totalDurationSeconds, null);
   await f.call('post', f.review + '/approve', { baseContentRevision: 0, expectedRevision: 8 }, f.admin).expect(200);
+  const current = (await read(detailPath).expect(200)).body.data.course;
+  assert.equal(current.sections[0].lessons[0].id, added);
+  assert.deepEqual([current.sectionCount, current.lessonCount, current.unknownDurationCount,
+    current.totalDurationSeconds], [1, 1, 0, 87]);
   assert.equal(await Lesson.countDocuments({ _id: f.lesson.id }), 0);
   assert.equal(await LessonProgress.countDocuments({ lessonId: f.lesson.id }), 1);
   const outline = (await read(learningPath(f), f.student).expect(200)).body.data;

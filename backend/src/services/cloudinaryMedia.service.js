@@ -4,7 +4,7 @@ import { v2 as cloudinary } from 'cloudinary';
 
 import { env } from '../config/env.js';
 import { ApiError } from '../utils/ApiError.js';
-import { cloudinaryPublicId } from '../utils/cloudinaryPublicId.js';
+import { cloudinaryPublicId, isValidImagePublicId } from '../utils/cloudinaryPublicId.js';
 
 const PURPOSES = Object.freeze({
   avatar: Object.freeze({ resourceType: 'image', deliveryType: 'upload', preset: 'image' }),
@@ -42,8 +42,7 @@ export function createCloudinaryMediaProvider({
 
   return Object.freeze({
     publicImageUrl({ publicId, format }) {
-      if (!configured) return null;
-      publicId = cloudinaryPublicId(publicId, 'image');
+      if (!configured || !isValidImagePublicId(publicId)) return null;
       if (!['jpg', 'jpeg', 'png', 'webp'].includes(format)) return null;
       return `https://res.cloudinary.com/${encodeURIComponent(cloudName)}`
         + `/image/upload/${publicId}.${format}`;

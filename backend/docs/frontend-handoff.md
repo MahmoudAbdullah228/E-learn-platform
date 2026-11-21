@@ -1,4 +1,9 @@
-# Frontend API handoff — Sprint 1, implemented Sprint 2 and S3-09
+# Frontend API handoff — MVP backend
+
+Use OpenAPI **1.11.0** for the current request and response schemas. It includes
+[revision submission and admin publication decisions](#published-course-revision-review-openapi-1110).
+Start with the [three-role demo and acceptance checklist](sprint_3_demo.md) for
+the order of calls, expected UI states and outstanding sign-offs.
 
 OpenAPI **1.10.0** adds the [instructor revision editor](#instructor-revision-editor) and [admin text corrections](#published-course-text-corrections).
 

@@ -462,6 +462,9 @@ test('library validates cover ownership and last-lesson course membership before
   } } });
   const image = await read('/users/me/courses', student.token, imagesApp).expect(200);
   assert.equal(image.body.data.courses[0].course.coverUrl, 'https://images.example.test/library/cover');
+  await MediaAsset.collection.updateOne({ _id: cover._id }, { $unset: { targetId: '' } });
+  const incomplete = await read('/users/me/courses', student.token, imagesApp).expect(200);
+  assert.equal(incomplete.body.data.courses[0].course.coverUrl, null);
   await MediaAsset.updateOne({ _id: cover.id }, { $set: { status: 'deleted' } });
   const deleted = await read('/users/me/courses', student.token, imagesApp).expect(200);
   assert.equal(deleted.body.data.courses[0].course.coverUrl, null); assert.equal(imageCalls, 1);

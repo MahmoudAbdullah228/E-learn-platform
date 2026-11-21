@@ -6,7 +6,7 @@ import pinoHttp from 'pino-http';
 
 import { corsOptions } from './config/cors.js';
 import { env } from './config/env.js';
-import { logger, serializeRequest } from './config/logger.js';
+import { logger, serializeError, serializeRequest } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { createAuthRouter } from './modules/auth/auth.routes.js';
 import { healthRouter } from './modules/health/health.routes.js';
@@ -161,8 +161,11 @@ export function createApp({
   application.use(
     pinoHttp({
       logger,
+      wrapSerializers: false,
       serializers: {
         req: serializeRequest,
+        res: response => ({ statusCode: response.statusCode }),
+        err: serializeError,
       },
     }),
   );

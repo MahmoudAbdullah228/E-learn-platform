@@ -1,5 +1,8 @@
 # E-Learning Marketplace API
 
+For frontend integration use the [current API contract](docs/openapi.yaml),
+[frontend handoff](docs/frontend-handoff.md) and [three-role demo](docs/sprint_3_demo.md).
+
 Stories 1.1 through 2.4 provide the production-oriented foundation, authentication, basic profiles, instructor application review, draft courses, ordered curricula, and Mux direct-video uploads. Sprint 2 through S2-11 adds media, categories, review/publication, catalog, Stripe Test checkout/fulfillment, free enrollment, the student library, student/admin order reads, signed Mux playback, private PDF downloads, lesson completion and resume position with dynamic progress. S2-12 real Stripe/Mux/Cloudinary staging acceptance is still required before release.
 
 Sprint 3 S3-02 adds an internal financial foundation: versioned policy models, refund and

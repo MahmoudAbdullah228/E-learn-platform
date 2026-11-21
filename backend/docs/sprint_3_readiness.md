@@ -148,3 +148,27 @@ does not authorize modifying the providers, creating accounts or deployment toda
 S3-02 internal financial foundation was the next step at capture and is now implemented
 locally, followed by S3-03/04 and guarded S3-05 contracts; next step is S3-06. S3-18 requires
 only its remaining gap/evidence work, not rebuilding profile/catalog changes already done.
+
+## S3-18 local regression evidence
+
+Local verification on 2026-11-21 passed OpenAPI validation, lint and 666 tests.
+After the final catalog/library refactor, lint and all 89 tests in the four affected
+catalog, library/orders, provider contract and course administration suites passed again.
+
+| Requirement | Backend check | Frontend acceptance owner |
+| --- | --- | --- |
+| STU03 / G01 profile and avatar | `users.integration`, `media.integration` and `provider-contracts` cover profile reads, confirmed avatar ownership, replacement, deletion, missing assets and nullable image delivery. | FE1 for own profile, FE2 for public instructor profile |
+| STU04–06 / G02 discovery and public course detail | `catalog.integration` checks Arabic/English prefixes, combined category/pricing/search, empty pages and hidden drafts. `curriculum-summary` covers unknown and overflow duration. `course-administration.integration` reads the live outline before and after revision approval. | FE1 for search, public outline and unknown-duration display |
+| Instructor application, category and draft review | `instructor-applications.integration`, `categories.integration`, `curriculum.integration` and `course-review.integration` exercise rejection/resubmission, category state, ownership, ordering and review. | FE2 + FE3 for the instructor and reviewer flows |
+| Student library, orders, playback and progress | `enrollment-orders.integration`, `learning-access.integration` and `progress.integration` exercise access, historical orders, private media, completion and resume. | FE1 for the enrolled learner flow |
+
+Two legacy media cases surfaced during this audit. A cover missing its owner or
+course reference now yields a null URL in both catalog and library. An invalid
+stored Cloudinary public ID now yields a null public image URL for display.
+The upload and private file paths still validate the provider ID strictly.
+Existing API fields and the documented image placeholder apply to both cases.
+
+**Outstanding acceptance:** FE1/FE2 should render the own/public profile, missing
+image and published curriculum states against the deployed candidate for B19.
+Record the build and observed results in the [staging matrix](sprint_3_staging_matrix.md).
+The [frontend handoff](frontend-handoff.md) describes the nullable fields.

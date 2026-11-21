@@ -10,6 +10,7 @@ import { ApiError } from '../../utils/ApiError.js';
 import { normalizeSearchText } from '../../utils/searchText.js';
 import { summarizeCurriculum } from './curriculumSummary.js';
 import { publicCourseFilter } from '../courses/courseAccess.policy.js';
+import { courseCoverUrl } from '../media/courseCoverUrl.js';
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -62,12 +63,7 @@ async function relatedData(courses, mediaProvider, { instructorDetails = false, 
     .select('_id publicId format targetId ownerId').session(session ?? null).lean();
   const byId = items => new Map(items.map(item => [item._id.toString(), item]));
   const coversById = byId(covers);
-  const coverUrl = course => {
-    const asset = coversById.get(course.coverAssetId?.toString());
-    if (!asset || asset.targetId.toString() !== course._id.toString()
-        || asset.ownerId.toString() !== course.instructorId.toString()) return null;
-    return mediaProvider.publicImageUrl({ publicId: asset.publicId, format: asset.format });
-  };
+  const coverUrl = course => courseCoverUrl(course, coversById.get(course.coverAssetId?.toString()), mediaProvider);
   return { categories: byId(categories), instructors: byId(instructors), coverUrl };
 }
 

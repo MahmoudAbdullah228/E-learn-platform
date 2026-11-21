@@ -1,5 +1,7 @@
 # Sprint 2 delivery evidence
 
+The [S3-16 evidence register](sprint_3_staging_matrix.md) tracks the current local rehearsal and individual staging cases.
+
 ## S3-05 guarded refund request/provider boundary — 2026-11-18
 
 `npm run verify` passed lint, OpenAPI validation and **542 tests, 0 failed, 0 skipped,

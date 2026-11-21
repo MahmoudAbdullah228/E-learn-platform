@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 import request from 'supertest';
@@ -124,7 +125,7 @@ test('request logging excludes query values and headers', () => {
   const serialized = serializeRequest({
     id: 7,
     method: 'GET',
-    url: '/api/v1/health?token=review-secret',
+    url: '/private/review-secret?token=review-secret',
     query: { token: 'review-secret' },
     headers: { authorization: 'Bearer review-secret' },
     remoteAddress: '127.0.0.1',
@@ -134,9 +135,6 @@ test('request logging excludes query values and headers', () => {
   assert.deepEqual(serialized, {
     id: 7,
     method: 'GET',
-    path: '/api/v1/health',
-    remoteAddress: '127.0.0.1',
-    remotePort: 1234,
   });
   assert.equal(JSON.stringify(serialized).includes('review-secret'), false);
 });
@@ -154,6 +152,25 @@ test('error logging excludes messages, stacks, and unsafe codes', () => {
 
   error.code = 'unsafe code containing credentials=secret';
   assert.deepEqual(serializeError(error), { errorType: 'Error' });
+  error.name = 'provider failure: review-secret';
+  assert.deepEqual(serializeError(error), { errorType: 'UnknownError' });
+});
+
+test('emitted HTTP access logs contain only approved request and response fields', () => {
+  const source = `
+    import request from 'supertest';
+    import { app } from './src/app.js';
+    await request(app).get('/private/log-canary?key=log-canary')
+      .set('Authorization', 'Bearer log-canary').set('Cookie', 'session=log-canary').expect(404);
+  `;
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', source], {
+    cwd: new URL('../', import.meta.url), encoding: 'utf8',
+    env: { ...process.env, LOG_LEVEL: 'info' },
+  });
+  assert.equal(output.includes('log-canary'), false);
+  const entry = output.trim().split('\n').map(line => JSON.parse(line)).find(row => row.res);
+  assert.deepEqual(Object.keys(entry.req).sort(), ['id', 'method']);
+  assert.deepEqual(entry.res, { statusCode: 404 });
 });
 
 test('CORS accepts configured origins with credentials', async () => {
