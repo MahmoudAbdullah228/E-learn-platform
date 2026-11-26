@@ -1,0 +1,101 @@
+import { Layout, Menu, Avatar, Button } from 'antd';
+import {
+  AppstoreOutlined,
+  AuditOutlined,
+  BookOutlined,
+  DashboardOutlined,
+  DollarOutlined,
+  LogoutOutlined,
+  ShoppingCartOutlined,
+  TeamOutlined,
+} from '@ant-design/icons';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAppSelector } from '@/app/hooks';
+import { PathlyLogo } from '@/components/common/PathlyLogo';
+import { useDashboardNotify } from '@/components/dashboard';
+import { useLogoutAction } from '@/features/auth/useLogoutAction';
+import { DashboardThemeProvider } from '@/layouts/DashboardThemeProvider';
+
+const { Header, Sider, Content } = Layout;
+
+function AdminLayoutInner() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const user = useAppSelector((state) => state.auth.user);
+  const { message } = useDashboardNotify();
+  const { handleLogout, isLoggingOut } = useLogoutAction((msg, isErr) => {
+    if (isErr) void message.error(msg);
+  });
+
+  const menuItems = [
+    { key: '/admin/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
+    { key: '/admin/instructor-applications', icon: <AuditOutlined />, label: 'Applications' },
+    { key: '/admin/courses', icon: <BookOutlined />, label: 'Courses' },
+    { key: '/admin/categories', icon: <AppstoreOutlined />, label: 'Categories' },
+    { key: '/admin/orders', icon: <ShoppingCartOutlined />, label: 'Orders' },
+    { key: '/admin/users', icon: <TeamOutlined />, label: 'Users' },
+    { key: '/admin/finance', icon: <DollarOutlined />, label: 'Finance & Payouts' },
+  ];
+
+  const activeKey =
+    menuItems.find((item) => location.pathname.startsWith(item.key))?.key ?? '/admin/dashboard';
+
+  return (
+    <Layout className="min-h-screen bg-canvas">
+      <Header className="flex items-center justify-between px-xl bg-surface border-b border-hairline">
+        <PathlyLogo to="/" />
+        <div className="flex items-center gap-md">
+          <Link to="/" className="text-[14px] font-medium text-ink-nav hover:text-primary">
+            Public Site
+          </Link>
+          <Link to="/app/profile" className="flex items-center">
+            <Avatar src={user?.avatarUrl ?? undefined} className="bg-primary text-on-primary">
+              {user?.name?.charAt(0)?.toUpperCase() ?? 'A'}
+            </Avatar>
+          </Link>
+          <Button
+            type="text"
+            icon={<LogoutOutlined />}
+            loading={isLoggingOut}
+            onClick={handleLogout}
+            aria-label="Log out"
+          />
+        </div>
+      </Header>
+
+      <Layout className="bg-canvas">
+        <Sider
+          width={240}
+          breakpoint="md"
+          collapsedWidth={0}
+          className="bg-canvas pt-xl px-xs"
+        >
+          <div className="px-md pb-xs text-[12px] font-bold uppercase tracking-[0.06em] text-ink-muted">
+            Admin Console
+          </div>
+          <Menu
+            mode="inline"
+            selectedKeys={[activeKey]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+            className="bg-transparent border-r-0"
+          />
+        </Sider>
+
+        <Content className="p-xl">
+          <div className="mx-auto max-w-[1200px]">
+            <Outlet />
+          </div>
+        </Content>
+      </Layout>
+    </Layout>
+  );
+}
+
+export default function AdminLayout() {
+  return (
+    <DashboardThemeProvider>
+      <AdminLayoutInner />
+    </DashboardThemeProvider>
+  );
+}
